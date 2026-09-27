@@ -1,0 +1,122 @@
+#!/bin/bash
+# Builds Flyby. There are two builds, with different bundle identifiers, so they
+# keep separate settings, Keychain entries, Google session, login item and
+# Accessibility grant, and can run side by side:
+#
+#   ./build.sh               → build/Flyby Dev.app   com.fringecore.flyby.dev
+#   ./run.sh                   (the same, then launch it)
+#   CONF=debug ./build.sh      unoptimized, for lldb
+#
+#   FLAVOR=release VERSION=0.3.0 ./build.sh
+#                            → build/Flyby.app       com.fringecore.flyby
+#                              (what ./release.sh runs; use that instead)
+#
+# All development happens in the dev build. It takes its version from git
+# ("0.3.0-dev.14 · pill": 14 commits past v0.3.0, on branch feature/pill), wears
+# an amber icon and a DEV badge, and never checks for updates. A release build is
+# made once per version by release.sh, universal (arm64 + x86_64), and frozen.
+#
+# Signing is ad-hoc unless SIGN_IDENTITY names a Developer ID, which also turns on
+# the hardened runtime and a secure timestamp (both required for notarization,
+# which release.sh does).
+set -euo pipefail
+cd "$(dirname "$0")"
+
+FLAVOR="${FLAVOR:-dev}"
+BASE_ID="com.fringecore.flyby"
+SIGN_IDENTITY="${SIGN_IDENTITY:--}"
+PLIST_VERSION=$(/usr/libexec/PlistBuddy -c 'Print CFBundleShortVersionString' Resources/Info.plist)
+
+case "$FLAVOR" in
+  dev)
+    # Optimized by default: an unoptimized SwiftUI build is laggier than what
+    # ships, which makes the dev app useless for judging how the pill feels.
+    CONF="${CONF:-release}"
+    APP_NAME="Flyby Dev"
+    BUNDLE_ID="$BASE_ID.dev"
+    ICON=Resources/AppIcon-Dev.icns
+    # Host architecture only — twice as fast, and it only ever runs here.
+    ARCHS="${ARCHS:-$(uname -m)}"
+    # A readable version from git: v0.3.0-14-g6160965 → "0.3.0-dev.14", plus
+    # " · pill" on feature/pill. Before the first v-tag, the plist's version.
+    if [[ -z "${VERSION:-}" ]]; then
+      if DESCRIBE="$(git describe --tags --match 'v[0-9]*' --long 2>/dev/null)"; then
+        REST="${DESCRIBE#v}"; REST="${REST%-g*}"            # 0.3.0-14
+        VERSION="${REST%-*}-dev.${REST##*-}"
+      else
+        VERSION="$PLIST_VERSION-dev"
+      fi
+      BRANCH="$(git symbolic-ref --short -q HEAD || true)"
+      case "$BRANCH" in ""|dev|main) ;; *) VERSION="$VERSION · ${BRANCH##*/}" ;; esac
+    fi
+    BUILD_NUMBER="$(date +%Y%m%d%H%M)"
+    ;;
+  release)
+    CONF="${CONF:-release}"
+    APP_NAME="Flyby"
+    BUNDLE_ID="$BASE_ID"
+    ICON=Resources/AppIcon.icns
+    ARCHS="${ARCHS:-arm64 x86_64}"
+    : "${VERSION:?FLAVOR=release needs VERSION — use ./release.sh <version>}"
+    # Monotonic across releases, which is all CFBundleVersion has to be.
+    BUILD_NUMBER="${BUILD_NUMBER:-$(date +%Y%m%d%H%M)}"
+    ;;
+  *) echo "✗ unknown FLAVOR '$FLAVOR' (dev|release)" >&2; exit 2 ;;
+esac
+COMMIT="$(git rev-parse --short HEAD 2>/dev/null || true)"
+APP="${OUT_DIR:-build}/$APP_NAME.app"
+
+ARCH_FLAGS=()
+for arch in $ARCHS; do ARCH_FLAGS+=(--arch "$arch"); done
+
+# MARK: - Compile
+
+echo "› Compiling $APP_NAME $VERSION ($CONF, $ARCHS)…"
+swift build -c "$CONF" "${ARCH_FLAGS[@]}"
+BIN="$(swift build -c "$CONF" "${ARCH_FLAGS[@]}" --show-bin-path)/Flyby"
+
+# MARK: - Bundle
+
+echo "› Assembling the app bundle…"
+rm -rf "$APP"
+mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
+cp "$BIN" "$APP/Contents/MacOS/Flyby"
+cp Resources/Info.plist "$APP/Contents/Info.plist"
+PB=/usr/libexec/PlistBuddy
+$PB -c "Set :CFBundleIdentifier $BUNDLE_ID" \
+    -c "Set :CFBundleName $APP_NAME" \
+    -c "Set :CFBundleDisplayName $APP_NAME" \
+    -c "Set :CFBundleShortVersionString $VERSION" \
+    -c "Set :CFBundleVersion $BUILD_NUMBER" \
+    "$APP/Contents/Info.plist"
+if [[ -n "$COMMIT" ]]; then
+  # Shown in Settings › General next to the version.
+  $PB -c "Add :FlybyCommit string $COMMIT" "$APP/Contents/Info.plist" 2>/dev/null \
+    || $PB -c "Set :FlybyCommit $COMMIT" "$APP/Contents/Info.plist"
+fi
+# Ancient, still expected: Launch Services reads it before the plist.
+printf 'APPL????' > "$APP/Contents/PkgInfo"
+
+# The icons are generated art; draw whichever is missing (see
+# Resources/IconGenerator/README.md to swap in real artwork).
+if [[ ! -f "$ICON" ]]; then
+  echo "› Drawing $(basename "$ICON")…"
+  if [[ "$FLAVOR" == dev ]]; then
+    swift Resources/IconGenerator/generate.swift --dev
+  else
+    swift Resources/IconGenerator/generate.swift
+  fi
+fi
+cp "$ICON" "$APP/Contents/Resources/AppIcon.icns"
+
+# MARK: - Sign
+
+echo "› Signing ($SIGN_IDENTITY)…"
+sign_args=(--force --sign "$SIGN_IDENTITY" --identifier "$BUNDLE_ID")
+if [[ "$SIGN_IDENTITY" != "-" ]]; then
+  sign_args+=(--options runtime --timestamp)
+fi
+codesign "${sign_args[@]}" "$APP"
+codesign --verify --strict "$APP"
+
+echo "✓ Built $APP ($BUNDLE_ID $VERSION, build $BUILD_NUMBER)"

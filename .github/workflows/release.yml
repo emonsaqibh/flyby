@@ -1,0 +1,103 @@
+name: Release
+
+# Two ways to publish a version:
+#
+#   - Actions › Release › Run workflow, and type the version (0.3.0-beta.1).
+#     Tags the commit it runs on as v<version>.
+#   - Or push a tag:
+#       git tag -a v0.3.0-beta.1 -m "Flyby 0.3.0-beta.1" && git push origin v0.3.0-beta.1
+#
+# The same thing ./release.sh + ./publish.sh do on a Mac, done on GitHub's
+# macOS runner instead: test, build the universal release flavor, zip it with
+# ditto, and create the GitHub release with Flyby.zip attached — a pre-release
+# for x.y.z-suffix tags, the repo's Latest for plain x.y.z. Notes come from
+# docs/releases/<version>.md when that file exists.
+on:
+  push:
+    tags: ['v[0-9]*']
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to release, e.g. 0.3.0-beta.1 or 0.3.0 (tagged v<version> on the selected branch)"
+        required: true
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ inputs.version || github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: Build & publish
+    runs-on: macos-26
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Read the version from the tag
+        id: version
+        env:
+          GH_TOKEN: ${{ github.token }}
+          INPUT_VERSION: ${{ inputs.version }}
+        run: |
+          if [[ "$GITHUB_EVENT_NAME" == workflow_dispatch ]]; then
+            VERSION="${INPUT_VERSION#v}"
+            if gh release view "v$VERSION" >/dev/null 2>&1 || git ls-remote --exit-code --tags origin "refs/tags/v$VERSION" >/dev/null; then
+              echo "::error::v$VERSION already exists — versions are never reused"
+              exit 1
+            fi
+          else
+            VERSION="${GITHUB_REF_NAME#v}"
+          fi
+          if ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z]+(\.[0-9A-Za-z]+)*)?$ ]]; then
+            echo "::error::'$VERSION' isn't a version (X.Y.Z or X.Y.Z-beta.N)"
+            exit 1
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "tag=v$VERSION" >> "$GITHUB_OUTPUT"
+          if [[ "$VERSION" == *-* ]]; then echo "kind=--prerelease" >> "$GITHUB_OUTPUT"; else echo "kind=--latest" >> "$GITHUB_OUTPUT"; fi
+
+      - name: Select Xcode
+        run: |
+          XCODE=$(ls -d /Applications/Xcode_*.app | grep -viE 'beta|release_candidate|_rc' | sort -V | tail -1)
+          sudo xcode-select -s "$XCODE"
+          xcodebuild -version
+
+      - name: Test
+        run: swift test
+
+      - name: Build Flyby ${{ steps.version.outputs.version }} (universal)
+        run: FLAVOR=release VERSION="${{ steps.version.outputs.version }}" ./build.sh
+
+      - name: Check the build
+        run: |
+          lipo -archs build/Flyby.app/Contents/MacOS/Flyby | grep -q 'x86_64 arm64\|arm64 x86_64'
+          test "$(/usr/libexec/PlistBuddy -c 'Print CFBundleIdentifier' build/Flyby.app/Contents/Info.plist)" = com.fringecore.flyby
+          test "$(/usr/libexec/PlistBuddy -c 'Print CFBundleShortVersionString' build/Flyby.app/Contents/Info.plist)" = "${{ steps.version.outputs.version }}"
+          codesign --verify --strict build/Flyby.app
+
+      - name: Package
+        run: ditto -c -k --keepParent build/Flyby.app build/Flyby.zip
+
+      - name: Publish the GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          NOTES="docs/releases/$VERSION.md"
+          if [[ -f "$NOTES" ]]; then NOTE_ARGS=(--notes-file "$NOTES"); else NOTE_ARGS=(--generate-notes); fi
+          TAG="${{ steps.version.outputs.tag }}"
+          # A pushed tag already exists; a manual run creates it on this commit.
+          if [[ "$GITHUB_EVENT_NAME" == workflow_dispatch ]]; then TAG_ARGS=(--target "$GITHUB_SHA"); else TAG_ARGS=(--verify-tag); fi
+          gh release create "$TAG" build/Flyby.zip "${TAG_ARGS[@]}" \
+            ${{ steps.version.outputs.kind }} --title "Flyby $VERSION" "${NOTE_ARGS[@]}"
+
+          # install.sh and the in-app updater both need the zip; make sure it's there.
+          for _ in $(seq 1 12); do
+            gh release view "$TAG" --json assets --jq '.assets[].name' | grep -qx Flyby.zip && exit 0
+            sleep 5
+          done
+          echo "::error::Flyby.zip isn't attached to $TAG"
+          exit 1

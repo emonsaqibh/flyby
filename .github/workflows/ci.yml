@@ -1,0 +1,93 @@
+name: CI
+
+on:
+  # Docs-only pushes don't need a macOS build — and would cancel one that's
+  # running, since runs on the same branch replace each other.
+  push:
+    paths-ignore: ['**/*.md']
+  pull_request:
+    paths-ignore: ['**/*.md']
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build & test (macOS)
+    runs-on: macos-26
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      # Liquid Glass needs the macOS 26 SDK or newer, so pick the newest
+      # release Xcode on the image rather than whatever the default is.
+      - name: Select Xcode
+        run: |
+          ls -d /Applications/Xcode*.app || true
+          XCODE=$(ls -d /Applications/Xcode_*.app | grep -viE 'beta|release_candidate|_rc' | sort -V | tail -1)
+          echo "Using $XCODE"
+          sudo xcode-select -s "$XCODE"
+          xcodebuild -version
+          xcrun --show-sdk-version
+          swift --version
+
+      - name: Build (debug)
+        run: swift build
+
+      - name: Test
+        if: hashFiles('Tests/**/*.swift') != ''
+        run: swift test
+
+      - name: Build dev app (Flyby Dev)
+        run: ./build.sh
+
+      # The release flavor, universal, exactly as release.sh builds it — so a
+      # release can't be the first time that configuration ever compiles.
+      - name: Build release app (Flyby, universal)
+        run: FLAVOR=release VERSION="0.0.0-ci.${{ github.run_number }}" ./build.sh
+
+      - name: Check the release binary is universal
+        run: lipo -archs build/Flyby.app/Contents/MacOS/Flyby | grep -q 'x86_64 arm64\|arm64 x86_64'
+
+      # upload-artifact drops POSIX permissions, which leaves an app whose
+      # executable won't run. ditto keeps them (and the signature) intact.
+      - name: Zip apps
+        run: |
+          ditto -c -k --keepParent "build/Flyby Dev.app" "build/Flyby-Dev.zip"
+          ditto -c -k --keepParent build/Flyby.app build/Flyby.zip
+
+      - name: Upload dev app
+        uses: actions/upload-artifact@v4
+        with:
+          name: Flyby-Dev
+          path: build/Flyby-Dev.zip
+          if-no-files-found: error
+
+      - name: Upload release app
+        uses: actions/upload-artifact@v4
+        with:
+          name: Flyby-release-ci
+          path: build/Flyby.zip
+          if-no-files-found: error
+
+  # macOS 27 SDK, on GitHub's preview image. Informational until the image is
+  # GA: it catches deprecations and SDK breakage early without blocking merges.
+  build-xcode27:
+    name: Build & test (Xcode 27 preview)
+    runs-on: xcode-27
+    continue-on-error: true
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Toolchain
+        run: |
+          xcodebuild -version
+          xcrun --show-sdk-version
+          swift --version
+      - name: Build (debug)
+        run: swift build
+      - name: Test
+        if: hashFiles('Tests/**/*.swift') != ''
+        run: swift test
