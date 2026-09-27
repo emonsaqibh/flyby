@@ -69,11 +69,13 @@ enum GeminiProvider {
         case sources([WebSource])
     }
 
-    static func stream(query: String) -> AsyncThrowingStream<Event, Error> {
+    /// `context` is the conversation so far, for a follow-up; empty for a
+    /// first question.
+    static func stream(query: String, context: [ChatMessage] = []) -> AsyncThrowingStream<Event, Error> {
         AsyncThrowingStream { continuation in
             let task = Task {
                 do {
-                    try await run(query: query) { continuation.yield($0) }
+                    try await run(query: query, context: context) { continuation.yield($0) }
                     continuation.finish()
                 } catch {
                     continuation.finish(throwing: error)
@@ -96,7 +98,7 @@ enum GeminiProvider {
     private static let maxRetryDelay: TimeInterval = 5
     private static let defaultRetryDelay: TimeInterval = 1.5
 
-    private static func run(query: String, emit: @escaping (Event) -> Void) async throws {
+    private static func run(query: String, context: [ChatMessage], emit: @escaping (Event) -> Void) async throws {
         let settings = await MainActor.run {
             (key: AppSettings.shared.geminiKey, model: AppSettings.shared.geminiModel)
         }
@@ -104,7 +106,7 @@ enum GeminiProvider {
         guard !key.isEmpty else { throw GeminiError.missingKey }
         let model = normalizedModel(settings.model)
 
-        let request = try makeRequest(query: query, model: model, key: key)
+        let request = try makeRequest(query: query, context: context, model: model, key: key)
 
         for attempt in 0..<2 {
             let (bytes, response) = try await URLSession.shared.bytes(for: request)
@@ -141,7 +143,7 @@ enum GeminiProvider {
         return model.isEmpty ? AppSettings.defaultGeminiModel : model
     }
 
-    private static func makeRequest(query: String, model: String, key: String) throws -> URLRequest {
+    private static func makeRequest(query: String, context: [ChatMessage], model: String, key: String) throws -> URLRequest {
         guard let escaped = model.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed),
               let url = URL(string: "https://generativelanguage.googleapis.com/v1beta/models/\(escaped):streamGenerateContent?alt=sse")
         else { throw GeminiError.malformedRequest }
@@ -161,14 +163,18 @@ enum GeminiProvider {
             : ["temperature": 0.3]
 
         let body: [String: Any] = [
-            "contents": [["parts": [["text": query]]]],
+            "contents": (context + [ChatMessage(role: .user, text: query)]).map { message -> [String: Any] in
+                ["role": message.role.rawValue, "parts": [["text": message.text]]]
+            },
             "tools": [["google_search": [String: Any]()]],
             "generationConfig": generationConfig,
             "systemInstruction": [
                 "parts": [["text": """
                 Answer the user's query directly and concisely, the way a good search \
                 result would. Lead with the answer itself. Use short paragraphs or a \
-                few bullets. Skip preamble and skip offers of further help.
+                few bullets. Skip preamble and skip offers of further help. When the \
+                query follows earlier turns, read it in their context: "and in \
+                winter?" is about whatever was just discussed.
                 """]]
             ],
         ]

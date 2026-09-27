@@ -162,12 +162,8 @@ rate-limited or overloaded request is retried once.
 
 ## Appearance
 
-Settings › Appearance has three controls:
+Settings › Appearance has two controls:
 
-- **Liquid Glass** — macOS 26's glass material for the pill and the answer
-  panel, on by default where the OS supports it. Off falls back to the classic
-  `NSVisualEffectView` blur. The toggle is disabled with an explanation on
-  macOS 15 and earlier.
 - **Appearance** — System, Light or Dark. Set once on `NSApp`, so the pill, the
   result panel and the settings window all inherit it. System follows macOS
   live.
@@ -176,16 +172,36 @@ Settings › Appearance has three controls:
 
 ### Liquid Glass
 
-On macOS 26 and later the pill and the answer panel are Liquid Glass — and on
-macOS 27 they pick up its refinements (stronger diffusion, the ultra-clear to
-tinted slider) automatically. The pill is laid out like Spotlight: a glass bar
-with the ↩ and provider controls as separate glass bubbles that morph out of it
-as you type. The panel uses regular (non-interactive) glass, since pointer
-motion is a distraction in something you're reading, with a floating glass
-header whose buttons merge and split as they come and go.
+Flyby is Liquid Glass by design — there's no switch for it. On macOS 26 and
+later the pill and the answer panel are glass, and builds made with the macOS 27
+SDK follow macOS 27's glass slider (clear to tinted) in System Settings. The
+pill is laid out like Spotlight: a glass bar with the ↩ and provider controls as
+separate glass bubbles that morph out of it as you type. The panel uses regular
+(non-interactive) glass, since pointer motion is a distraction in something
+you're reading, with a floating glass header whose buttons merge and split as
+they come and go.
 
-Glass off, macOS 14–25, and Reduce Transparency all get the classic blurred
-material instead. Reduce Motion swaps the panel's unfold for a fade.
+The pill and the panel share one window and one glass container, which is what
+lets them move like the Dynamic Island: the pill springs out of a small blob
+when it opens, the panel grows up out of the pill's capsule when there's an
+answer, and closing folds it all back down.
+
+macOS 14–15 and Reduce Transparency get the classic blurred material instead.
+Reduce Motion swaps the springs for short fades.
+
+## Chats and history
+
+Once an answer is on screen, the pill becomes the chat box: the cursor stays in
+it, it says "Ask a follow-up…", and whatever you ask next is added to the
+conversation above rather than replacing it. Gemini answers follow-ups in the
+context of the conversation so far; Google AI Mode answers each question on its
+own. **New Chat** (⌘N) starts over.
+
+Every chat is saved on your Mac — one small file per chat in
+`~/Library/Application Support/<bundle id>/History/`, never uploaded. Press ↑ in
+an empty pill (or ⌘Y, or the clock button in the panel) to see recent chats; ↑↓
+and Return pick one, and you carry on where you left off. The newest 200 are
+kept. Clear them in Settings › Search.
 
 ### Accent derivation
 

@@ -13,11 +13,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private static let log = Logger(subsystem: "com.fringecore.flyby", category: "ui")
 
     private let controller = SearchController()
+    private let stage = PanelStage()
     private let hotKeys = HotKeyMonitor()
     // Lazy, so a launch that hands straight over to the installed copy never
-    // builds windows it won't use.
-    private lazy var panel = PillPanel(controller: controller)
-    private lazy var results = ResultPanel(controller: controller)
+    // builds a window it won't use.
+    private lazy var panel = FlybyPanel(controller: controller, stage: stage)
+    /// Bumped on every open and close, so a close animation that finishes
+    /// after Flyby was opened again doesn't hide it.
+    private var presentationGeneration = 0
     private var settingsWindow: NSWindow?
     private var onboardingWindow: NSWindow?
     private var statusItem: NSStatusItem?
@@ -64,16 +67,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard !isRunning else { return }
         isRunning = true
 
-        // Built up front, so the first summon doesn't pay for them.
+        // Built up front, so the first summon doesn't pay for it.
         _ = panel
-        _ = results
         installStatusItem()
         installMenu()
         observeDismissRequests()
         observeOnboardingRequests()
         observeInstaller()
         observeOtherInstances()
-        observeModeChanges()
+        observeHistoryRequests()
         installKeyboardShortcuts()
         observeAppearance()
         startHotKeys()
@@ -101,14 +103,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private var ownsKeyWindow: Bool {
-        panel.isKeyWindow || results.isKeyWindow
+        panel.isKeyWindow
+    }
+
+    /// The pill's text field has the keyboard — not the web page, and not a
+    /// selection in an answer.
+    private var isTypingInPill: Bool {
+        (panel.firstResponder as? NSTextView)?.isFieldEditor == true
     }
 
     /// The pill's keys. ⌘Return escapes to the real browser whatever the
     /// provider is, and Esc closes — both need intercepting, since the text
     /// field swallows Return and the web view swallows Esc. The rest act on
     /// the answer: ⌘. stops it, ⌘R asks again, ⌘⇧C copies it. Plain ⌘C is
-    /// left alone so it keeps copying the selection.
+    /// left alone so it keeps copying the selection. ⌘N starts a new chat and
+    /// ⌘Y shows recent ones; so does ↑ in an empty pill, and ↑↓ then move
+    /// through them.
     private func installKeyboardShortcuts() {
         keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
             // Local monitors run on the main thread.
@@ -127,7 +137,34 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return true
         }
         if event.keyCode == 53 {  // Esc
-            hidePill()
+            // One step back at a time: out of the history list, then away.
+            if controller.showsHistory {
+                controller.closeHistory()
+            } else {
+                hidePill()
+            }
+            return true
+        }
+        // ↑ (126) and ↓ (125) in the pill, when there's nothing typed to
+        // move the caret through.
+        if modifiers.isEmpty, event.keyCode == 126 || event.keyCode == 125,
+           isTypingInPill, controller.query.isEmpty {
+            if controller.showsHistory {
+                controller.moveHistorySelection(by: event.keyCode == 126 ? -1 : 1)
+                return true
+            }
+            if event.keyCode == 126 {
+                controller.openHistory()
+                return true
+            }
+            return false
+        }
+        if modifiers == .command, Self.matches(event, character: "n", keyCode: 45), controller.showsPanel {
+            controller.newChat()
+            return true
+        }
+        if modifiers == .command, Self.matches(event, character: "y", keyCode: 16) {
+            controller.toggleHistory()
             return true
         }
         if modifiers == .command, Self.matches(event, character: ".", keyCode: 47), controller.isBusy {
@@ -375,22 +412,36 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // MARK: - Showing and hiding
 
     private func togglePill() {
-        if panel.isVisible { hidePill() } else { showPill() }
+        if stage.isPresented { hidePill() } else { showPill() }
     }
 
     private func showPill() {
         guard isRunning else { return }
+        presentationGeneration += 1
         controller.reset()
-        guard let screen = PillPanel.activeScreen else { return }
+        guard let screen = FlybyPanel.activeScreen else { return }
 
+        // Reopened mid-close: this app is still frontmost, and the app to go
+        // back to is the one remembered before.
         let frontmost = NSWorkspace.shared.frontmostApplication
-        previousApp = frontmost?.processIdentifier == ProcessInfo.processInfo.processIdentifier ? nil : frontmost
+        if frontmost?.processIdentifier != ProcessInfo.processInfo.processIdentifier {
+            previousApp = frontmost
+        }
 
+        // Folded up and in place before the window shows, so the first frame
+        // is the blob the pill opens out of.
+        stage.prepare()
         panel.position(on: screen)
         NSApp.activate()
         panel.makeKeyAndOrderFront(nil)
         NotificationCenter.default.post(name: .quickSearchDidShow, object: nil)
         startWatchingForOutsideClicks()
+        // Next pass, once the folded state has been drawn: animating from a
+        // state that never reached the screen would skip the opening.
+        DispatchQueue.main.async { [weak self] in
+            guard let self, self.panel.isVisible else { return }
+            self.stage.present()
+        }
 
         // A cold Google page costs the first AI Mode search a second or two;
         // warming it while the user types hides that.
@@ -402,36 +453,47 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     /// `returnFocus` is false when the dismissal came from a click elsewhere:
     /// that click already picked where focus goes.
+    ///
+    /// Focus goes back at once — whatever is typed during the closing
+    /// animation belongs to the app the user is returning to — while the
+    /// window stays up for the animation and goes once it has played.
     private func hidePill(returnFocus: Bool = true) {
+        guard stage.isPresented || panel.isVisible else { return }
         stopWatchingForOutsideClicks()
-        results.dismiss()
-        panel.orderOut(nil)
-        controller.reset()
+        presentationGeneration += 1
+        let generation = presentationGeneration
 
         let previous = previousApp
         previousApp = nil
 
-        // Hiding the app hands focus back to whatever the user was working
-        // in — but it would also hide Settings or onboarding, and the practice
-        // step literally asks for Esc. With one of those open, give focus back
-        // without hiding anything.
-        guard let window = visibleAuxiliaryWindow else {
-            NSApp.hide(nil)
-            return
+        // With Settings or onboarding open, hand focus back without hiding
+        // anything — the practice step literally asks for Esc. Otherwise
+        // the app hides once the animation is done, which also returns focus
+        // if there was no app to hand it to.
+        let auxiliary = visibleAuxiliaryWindow
+        if returnFocus {
+            if let previous, !previous.isTerminated {
+                _ = previous.activate(options: [])
+            } else if let auxiliary {
+                auxiliary.makeKeyAndOrderFront(nil)
+            }
         }
-        guard returnFocus else { return }
-        if let previous, !previous.isTerminated {
-            _ = previous.activate(options: [])
-        } else {
-            window.makeKeyAndOrderFront(nil)
+
+        stage.dismiss { [weak self] in
+            guard let self, generation == self.presentationGeneration else { return }
+            self.panel.orderOut(nil)
+            self.controller.reset()
+            if self.visibleAuxiliaryWindow == nil, NSApp.isActive {
+                NSApp.hide(nil)
+            }
         }
     }
 
     /// Settings, onboarding, the Google sign-in window, an alert: any titled
-    /// window of ours still on screen once the pill and panel are gone.
+    /// window of ours still on screen besides the pill.
     private var visibleAuxiliaryWindow: NSWindow? {
         NSApp.windows.first { window in
-            window !== panel && window !== results
+            window !== panel
                 && window.isVisible
                 && window.styleMask.contains(.titled)
         }
@@ -444,28 +506,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             .store(in: &cancellables)
     }
 
-    /// Unfolds the result panel upward out of the pill as soon as there's
-    /// something to show.
-    private func observeModeChanges() {
-        controller.$phase
-            .map { $0 != .idle }
-            .removeDuplicates()
+    /// "Recent Chats" from the pill's menu.
+    private func observeHistoryRequests() {
+        NotificationCenter.default.publisher(for: .flybyShouldShowHistory)
             .receive(on: RunLoop.main)
-            .sink { [weak self] showing in
-                guard let self, self.panel.isVisible else { return }
-
-                if showing {
-                    // The pill's own screen, not wherever the mouse has
-                    // wandered since it opened: the two read as one object.
-                    guard let screen = self.panel.screen ?? PillPanel.activeScreen else { return }
-                    self.results.present(on: screen)
-                } else {
-                    self.results.dismiss()
-                }
-
-                // The result panel is ordered in front; keep typing in the pill.
-                self.panel.makeKeyAndOrderFront(nil)
-            }
+            .sink { [weak self] _ in self?.controller.openHistory() }
             .store(in: &cancellables)
     }
 
@@ -592,7 +637,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             .receive(on: RunLoop.main)
             .sink { [weak self] _ in
                 guard let self else { return }
-                if self.panel.isVisible { self.hidePill(returnFocus: false) }
+                if self.stage.isPresented { self.hidePill(returnFocus: false) }
                 self.openSettings()
             }
             .store(in: &cancellables)

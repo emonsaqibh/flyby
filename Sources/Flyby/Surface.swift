@@ -1,21 +1,27 @@
 import SwiftUI
 import AppKit
 
-/// Whether Liquid Glass is available to us at all.
+/// Liquid Glass is how Flyby looks — not an option. It's used wherever the
+/// system has it; the classic blurred material is only for macOS 14–15 and
+/// for Reduce Transparency, which asks for exactly what that material does
+/// (it turns opaque by itself) where glass would only frost.
 enum LiquidGlass {
     static var isSupported: Bool {
         if #available(macOS 26.0, *) { return true }
         return false
     }
 
-    static let requirement = "Requires macOS 26 or later."
+    /// Whether glass is drawn right now.
+    static func isActive(reduceTransparency: Bool) -> Bool {
+        isSupported && !reduceTransparency
+    }
 }
 
 /// The background treatment shared by the pill, the result panel and the
 /// attention banner.
 ///
-/// Liquid Glass when the OS supports it and the user wants it, the classic
-/// `NSVisualEffectView` material otherwise. Glass draws its own edge highlight,
+/// Liquid Glass where the OS has it, the classic `NSVisualEffectView`
+/// material otherwise. Glass draws its own edge highlight,
 /// shadow and shaping — and macOS 27 retunes all of that, plus the user's
 /// clear-to-tinted slider, without us doing anything — so the manual clip and
 /// hairline border only apply to the fallback. Layering them under glass
@@ -34,13 +40,12 @@ struct Surface<S: Shape>: ViewModifier {
     /// doesn't rebuild everything underneath — that would remount the page.
     var isVisible: Bool = true
 
-    @ObservedObject private var settings = AppSettings.shared
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
     @Environment(\.colorSchemeContrast) private var contrast
 
     @ViewBuilder
     func body(content: Content) -> some View {
-        if #available(macOS 26.0, *), settings.liquidGlass, !reduceTransparency {
+        if #available(macOS 26.0, *), !reduceTransparency {
             content.glassEffect(glass, in: shape)
         } else {
             content
@@ -68,14 +73,14 @@ extension View {
         modifier(Surface(shape: shape, interactive: interactive, isVisible: isVisible))
     }
 
-    /// Glass buttons where glass is on, the bordered pair everywhere else.
+    /// Glass buttons where the system has them, the bordered pair elsewhere.
     /// Prominent is for the one action a view is asking for.
     func flybyGlassButton(prominent: Bool = false) -> some View {
         modifier(FlybyGlassButton(prominent: prominent))
     }
 
     /// Round glass icon buttons for control rows floating over content (the
-    /// result panel header). Without glass they fall back to borderless
+    /// panel header). Without glass they fall back to borderless
     /// glyphs, since a row of bordered circles is heavier than the text it
     /// sits above.
     func flybyGlassIconButton() -> some View {
@@ -91,11 +96,10 @@ extension View {
 
 private struct FlybyGlassButton: ViewModifier {
     let prominent: Bool
-    @ObservedObject private var settings = AppSettings.shared
 
     @ViewBuilder
     func body(content: Content) -> some View {
-        if #available(macOS 26.0, *), settings.liquidGlass {
+        if #available(macOS 26.0, *) {
             if prominent {
                 content.buttonStyle(.glassProminent)
             } else {
@@ -112,11 +116,9 @@ private struct FlybyGlassButton: ViewModifier {
 }
 
 private struct FlybyGlassIconButton: ViewModifier {
-    @ObservedObject private var settings = AppSettings.shared
-
     @ViewBuilder
     func body(content: Content) -> some View {
-        if #available(macOS 26.0, *), settings.liquidGlass {
+        if #available(macOS 26.0, *) {
             content
                 .buttonStyle(.glass)
                 .buttonBorderShape(.circle)
@@ -142,11 +144,10 @@ private struct SoftTopScrollEdge: ViewModifier {
 /// Glass elements that sit near each other should be rendered together, so
 /// they can share one sampling pass and blend or morph into each other as
 /// they appear — which is what makes a row of buttons read as one control.
-/// Transparent when glass is off.
+/// Transparent without glass.
 struct GlassGroup<Content: View>: View {
     private let spacing: CGFloat?
     private let content: Content
-    @ObservedObject private var settings = AppSettings.shared
 
     init(spacing: CGFloat? = nil, @ViewBuilder content: () -> Content) {
         self.spacing = spacing
@@ -155,7 +156,7 @@ struct GlassGroup<Content: View>: View {
 
     @ViewBuilder
     var body: some View {
-        if #available(macOS 26.0, *), settings.liquidGlass {
+        if #available(macOS 26.0, *) {
             GlassEffectContainer(spacing: spacing) {
                 content
             }

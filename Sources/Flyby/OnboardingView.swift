@@ -141,14 +141,6 @@ struct OnboardingView: View {
                 LabeledContent("Accent") {
                     AccentSwatches(selection: $settings.accent, diameter: 20)
                 }
-
-                if LiquidGlass.isSupported {
-                    Divider()
-                    Toggle("Liquid Glass material", isOn: $settings.liquidGlass)
-                    Text("The macOS glass look for the pill and answer panel.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
             }
         }
     }

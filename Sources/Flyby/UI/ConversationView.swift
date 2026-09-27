@@ -2,9 +2,11 @@ import SwiftUI
 import AppKit
 import FlybyCore
 
-/// The native answer: what the provider said, where it got it, and where you
-/// might go next — in one comfortably narrow reading column.
-struct AnswerView: View {
+/// The conversation: each question and its answer, oldest at the top, in
+/// one comfortably narrow reading column. The live turn — the one still
+/// answering, or the last one — carries the sources, the suggested next
+/// questions and the error card; earlier turns keep their answer and sources.
+struct ConversationView: View {
     @ObservedObject var controller: SearchController
     /// Height of the header floating over the top of the panel. Content starts
     /// below it and scrolls up underneath it.
@@ -14,54 +16,39 @@ struct AnswerView: View {
     var fadesUnderHeader = false
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 24) {
-                if let message = failureMessage {
-                    AnswerErrorCard(
-                        message: message,
-                        onRetry: { controller.retry() },
-                        onOpenInBrowser: { controller.submitToBrowser() }
-                    )
-                }
+        ScrollViewReader { reader in
+            ScrollView {
+                VStack(alignment: .leading, spacing: 34) {
+                    ForEach(controller.earlierTurns) { turn in
+                        EarlierTurnView(turn: turn)
+                    }
 
-                if !controller.answer.isEmpty {
-                    AnswerBlocksView(
-                        blocks: controller.answer.blocks,
-                        isStreaming: controller.phase == .streaming
-                    )
-                } else if controller.isBusy {
-                    AnswerSkeleton()
-                        .transition(.opacity)
-                } else if controller.phase == .complete {
-                    Text("Nothing came back for this one. Try rewording it, or open it in your browser.")
-                        .font(.system(size: 14))
-                        .foregroundStyle(.secondary)
+                    liveTurn
+                        .id(controller.liveTurnID)
                 }
-
-                if !controller.answer.sources.isEmpty {
-                    SourcesSection(sources: controller.answer.sources)
-                        .transition(.opacity)
-                }
-
-                // Only once the answer has settled: a suggestion that changes
-                // under the pointer mid-stream is a misclick waiting to happen.
-                if !controller.answer.followUps.isEmpty, !controller.isBusy {
-                    FollowUpsSection(followUps: controller.answer.followUps) { controller.ask($0) }
-                        .transition(.opacity)
+                // A line of 14pt text wider than this is hard to track back
+                // across; on a wide panel the column centres instead of sprawling.
+                .frame(maxWidth: AnswerMetrics.readingWidth, alignment: .leading)
+                .frame(maxWidth: .infinity)
+                .padding(.horizontal, 24)
+                .padding(.top, topInset + 6)
+                .padding(.bottom, 26)
+            }
+            .softTopScrollEdge()
+            // Each new question scrolls to the top of the view, so its answer
+            // has the whole panel to arrive in.
+            .onChange(of: controller.liveTurnID) {
+                guard !controller.earlierTurns.isEmpty else { return }
+                withAnimation(.spring(response: 0.45, dampingFraction: 0.9)) {
+                    reader.scrollTo(controller.liveTurnID, anchor: .top)
                 }
             }
-            // A line of 14pt text wider than this is hard to track back
-            // across; on a wide panel the column centres instead of sprawling.
-            .frame(maxWidth: AnswerMetrics.readingWidth, alignment: .leading)
-            .frame(maxWidth: .infinity)
-            .padding(.horizontal, 24)
-            .padding(.top, topInset + 6)
-            .padding(.bottom, 26)
-            .animation(.easeOut(duration: 0.25), value: controller.answer.isEmpty)
-            .animation(.easeOut(duration: 0.25), value: controller.answer.sources.count)
-            .animation(.easeOut(duration: 0.25), value: controller.isBusy)
+            .onAppear {
+                if !controller.earlierTurns.isEmpty {
+                    reader.scrollTo(controller.liveTurnID, anchor: .top)
+                }
+            }
         }
-        .softTopScrollEdge()
         .mask {
             if fadesUnderHeader {
                 headerFade
@@ -69,6 +56,52 @@ struct AnswerView: View {
                 Rectangle()
             }
         }
+    }
+
+    private var liveTurn: some View {
+        VStack(alignment: .leading, spacing: 24) {
+            // The first question is already the panel's title.
+            if !controller.earlierTurns.isEmpty {
+                QuestionBubble(text: controller.submittedQuery)
+            }
+
+            if let message = failureMessage {
+                AnswerErrorCard(
+                    message: message,
+                    onRetry: { controller.retry() },
+                    onOpenInBrowser: { controller.submitToBrowser() }
+                )
+            }
+
+            if !controller.answer.isEmpty {
+                AnswerBlocksView(
+                    blocks: controller.answer.blocks,
+                    isStreaming: controller.phase == .streaming
+                )
+            } else if controller.isBusy {
+                AnswerSkeleton()
+                    .transition(.opacity)
+            } else if controller.phase == .complete {
+                Text("Nothing came back for this one. Try rewording it, or open it in your browser.")
+                    .font(.system(size: 14))
+                    .foregroundStyle(.secondary)
+            }
+
+            if !controller.answer.sources.isEmpty {
+                SourcesSection(sources: controller.answer.sources)
+                    .transition(.opacity)
+            }
+
+            // Only once the answer has settled: a suggestion that changes
+            // under the pointer mid-stream is a misclick waiting to happen.
+            if !controller.answer.followUps.isEmpty, !controller.isBusy {
+                FollowUpsSection(followUps: controller.answer.followUps) { controller.ask($0) }
+                    .transition(.opacity)
+            }
+        }
+        .animation(.easeOut(duration: 0.25), value: controller.answer.isEmpty)
+        .animation(.easeOut(duration: 0.25), value: controller.answer.sources.count)
+        .animation(.easeOut(duration: 0.25), value: controller.isBusy)
     }
 
     private var failureMessage: String? {
@@ -92,6 +125,54 @@ struct AnswerView: View {
             .frame(height: topInset + 4)
             Rectangle()
         }
+    }
+}
+
+/// A finished turn: the question, and the answer as it stood.
+private struct EarlierTurnView: View {
+    let turn: ConversationTurn
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            QuestionBubble(text: turn.query)
+
+            if !turn.answer.isEmpty {
+                AnswerBlocksView(blocks: turn.answer.blocks)
+            } else if let failure = turn.failure {
+                Label(failure, systemImage: "exclamationmark.triangle")
+                    .font(.system(size: 13))
+                    .foregroundStyle(.secondary)
+            }
+
+            if !turn.answer.sources.isEmpty {
+                SourcesSection(sources: turn.answer.sources)
+            }
+        }
+    }
+}
+
+/// What you asked, on the right in a tinted bubble — the shape every chat
+/// uses for "you".
+struct QuestionBubble: View {
+    let text: String
+    @ObservedObject private var settings = AppSettings.shared
+
+    var body: some View {
+        HStack {
+            Spacer(minLength: 60)
+            Text(text)
+                .font(.system(size: 14, weight: .medium))
+                .textSelection(.enabled)
+                .padding(.horizontal, 14)
+                .padding(.vertical, 9)
+                .background(
+                    RoundedRectangle(cornerRadius: 18, style: .continuous)
+                        .fill(settings.accent.color.opacity(0.16))
+                )
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("You asked: \(text)")
     }
 }
 

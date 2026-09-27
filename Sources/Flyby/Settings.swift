@@ -160,10 +160,6 @@ final class AppSettings: ObservableObject {
     @Published var accent: AccentTheme {
         didSet { defaults.set(accent.rawValue, forKey: "accent") }
     }
-    /// macOS 26's Liquid Glass material for the pill and result panel.
-    @Published var liquidGlass: Bool {
-        didSet { defaults.set(liquidGlass, forKey: "liquidGlass") }
-    }
 
     /// Mirrors `SMAppService`, which is the real source of truth — the system
     /// can turn this off behind our back from System Settings › Login Items.
@@ -215,8 +211,8 @@ final class AppSettings: ObservableObject {
         readerMode = defaults.object(forKey: "readerMode") as? Bool ?? true
         appearance = AppearanceMode(rawValue: defaults.string(forKey: "appearance") ?? "") ?? .system
         accent = AccentTheme(rawValue: defaults.string(forKey: "accent") ?? "") ?? .system
-        // On by default where it exists — it's the system look on macOS 26.
-        liquidGlass = (defaults.object(forKey: "liquidGlass") as? Bool ?? true) && LiquidGlass.isSupported
+        // Glass stopped being optional in 0.4; forget the old switch.
+        defaults.removeObject(forKey: "liquidGlass")
         launchAtLogin = LoginItem.isEnabled
         geminiKey = Keychain.get(AppSettings.geminiKeyAccount) ?? ""
     }
@@ -245,7 +241,6 @@ final class AppSettings: ObservableObject {
         readerMode = true
         appearance = .system
         accent = .system
-        liquidGlass = LiquidGlass.isSupported
         launchAtLogin = false
         loginItemError = nil
         geminiKey = ""

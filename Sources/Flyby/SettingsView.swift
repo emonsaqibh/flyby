@@ -1,5 +1,6 @@
 import SwiftUI
 import AppKit
+import FlybyCore
 
 /// The settings window: a source list on the left, one pane on the right, in
 /// the shape of System Settings — which is where people already look for
@@ -13,11 +14,13 @@ struct SettingsView: View {
     @ObservedObject private var settings = AppSettings.shared
     @ObservedObject private var navigation = SettingsNavigation.shared
     @ObservedObject private var google = GoogleSession.shared
+    @ObservedObject private var history = ConversationHistory.shared
     /// Pauses the live hotkey while recording, so the old shortcut doesn't fire
     /// as the user presses their new one.
     let onRecordingChanged: (Bool) -> Void
 
     @State private var confirmingReset = false
+    @State private var confirmingClearHistory = false
 
     static let size = CGSize(width: 720, height: 560)
 
@@ -41,7 +44,17 @@ struct SettingsView: View {
             Button("Reset All Data", role: .destructive) { resetAll() }
             Button("Cancel", role: .cancel) { }
         } message: {
-            Text("Your shortcut, appearance, provider settings, Gemini API key and Google connection are all removed, and onboarding starts over. This can't be undone.")
+            Text("Your shortcut, appearance, provider settings, chat history, Gemini API key and Google connection are all removed, and onboarding starts over. This can't be undone.")
+        }
+        .confirmationDialog(
+            "Clear your chat history?",
+            isPresented: $confirmingClearHistory,
+            titleVisibility: .visible
+        ) {
+            Button("Clear History", role: .destructive) { history.clear() }
+            Button("Cancel", role: .cancel) { }
+        } message: {
+            Text("Every saved chat is deleted from this Mac. This can't be undone.")
         }
     }
 
@@ -210,16 +223,6 @@ struct SettingsView: View {
                     .foregroundStyle(.secondary)
             }
 
-            Section("Material") {
-                Toggle("Liquid Glass", isOn: $settings.liquidGlass)
-                    .disabled(!LiquidGlass.isSupported)
-                Text(LiquidGlass.isSupported
-                     ? "Uses macOS's Liquid Glass for the pill and the answer panel, and follows the glass look you've chosen in System Settings. Off falls back to the classic blurred material, as does Reduce Transparency."
-                     : "\(LiquidGlass.requirement) Using the classic blurred material.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-
             Section("Accent") {
                 LabeledContent("Color") {
                     AccentSwatches(selection: $settings.accent, diameter: 18)
@@ -274,6 +277,18 @@ struct SettingsView: View {
                     .foregroundStyle(.secondary)
             }
 
+            Section("Chat History") {
+                LabeledContent(history.summaries.isEmpty
+                               ? "No saved chats"
+                               : "\(history.summaries.count) saved \(history.summaries.count == 1 ? "chat" : "chats")") {
+                    Button("Clear History…", role: .destructive) { confirmingClearHistory = true }
+                        .disabled(history.summaries.isEmpty)
+                }
+                Text("Chats are kept on this Mac only, never uploaded. The newest \(HistoryStore.defaultLimit) are kept; older ones are removed automatically. Press ↑ in an empty pill or ⌘Y to see them.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
             Section("Gemini") {
                 SecureField("API key", text: $settings.geminiKey)
                 TextField("Model", text: $settings.geminiModel, prompt: Text(AppSettings.defaultGeminiModel))
@@ -314,7 +329,7 @@ struct SettingsView: View {
                 LabeledContent("Everything") {
                     Button("Reset All Data…", role: .destructive) { confirmingReset = true }
                 }
-                Text("Clears every preference, disconnects your Google account, forgets the Gemini key in your Keychain and turns off open-at-login — the state a fresh install would have. Reinstalling doesn't do this on its own, because settings live in your user account rather than in the app.")
+                Text("Clears every preference and your chat history, disconnects your Google account, forgets the Gemini key in your Keychain and turns off open-at-login — the state a fresh install would have. Reinstalling doesn't do this on its own, because settings live in your user account rather than in the app.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -324,6 +339,7 @@ struct SettingsView: View {
 
     private func resetAll() {
         settings.resetAll()
+        history.clear()
         Task { await GoogleSession.shared.disconnect() }
         navigation.section = .general
         showOnboarding()

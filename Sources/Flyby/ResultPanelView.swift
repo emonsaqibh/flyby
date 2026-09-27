@@ -2,25 +2,25 @@ import SwiftUI
 import AppKit
 import FlybyCore
 
-/// Contents of the panel above the pill: a floating control row, then either
-/// the native answer or — in AI Mode, when Google needs the user or they ask
-/// for it — Google's own page.
+/// Contents of the panel above the pill: a floating control row, then the
+/// conversation, the history list, or — in AI Mode, when Google needs the
+/// user or they ask for it — Google's own page.
 ///
 /// Three layers, back to front, in a structure that never changes shape
 /// while a search runs:
 ///
-/// 1. The page. Mounted for as long as AI Mode is the provider on screen and
+/// 1. The page. Mounted for as long as a live AI Mode turn is on screen and
 ///    hidden with opacity, never removed — the extractor reads the answer out
 ///    of it, so unmounting it mid-search would stop the search.
-/// 2. The native answer, which scrolls up under the header.
+/// 2. The conversation (or the history list), which scrolls up under the
+///    header.
 /// 3. The header.
 ///
-/// Nothing *above* the page branches on whether it's showing: the backing and
-/// the glass switch by parameter, not by `if`, because a branch around the
-/// page would rebuild — and remount — it.
+/// The glass (or classic material) and the panel's shape come from the root
+/// view, which animates them; nothing here branches around the page, since a
+/// branch would rebuild — and remount — it.
 struct ResultPanelView: View {
     @ObservedObject var controller: SearchController
-    @ObservedObject private var settings = AppSettings.shared
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
 
     var body: some View {
@@ -30,8 +30,11 @@ struct ResultPanelView: View {
             // Removed, not hidden, while the page shows: an invisible scroll
             // view above the page would still catch its scrolling, and the
             // page may be a CAPTCHA the user has to reach.
-            if !isWeb {
-                AnswerView(
+            if controller.showsHistory {
+                HistoryView(controller: controller, topInset: PanelMetrics.headerHeight, fadesUnderHeader: usesGlass)
+                    .transition(.opacity)
+            } else if !isWeb {
+                ConversationView(
                     controller: controller,
                     topInset: PanelMetrics.headerHeight,
                     fadesUnderHeader: usesGlass
@@ -47,12 +50,8 @@ struct ResultPanelView: View {
         .background {
             if isWeb { Color(nsColor: .textBackgroundColor) }
         }
-        .clipShape(PanelMetrics.shape)
-        // `.regular`, not interactive: this is something you read, and glass
-        // that shimmers under the pointer is a distraction in it.
-        .surface(PanelMetrics.shape, isVisible: !isWeb)
         .animation(.easeInOut(duration: 0.22), value: isWeb)
-        .themed()
+        .animation(.easeInOut(duration: 0.2), value: controller.showsHistory)
         // Links in answers go to the user's real browser, never in place.
         .environment(\.openURL, OpenURLAction { url in
             NSWorkspace.shared.open(url)
@@ -62,9 +61,7 @@ struct ResultPanelView: View {
 
     private var isWeb: Bool { controller.showsWebPage }
 
-    private var usesGlass: Bool {
-        LiquidGlass.isSupported && settings.liquidGlass && !reduceTransparency
-    }
+    private var usesGlass: Bool { LiquidGlass.isActive(reduceTransparency: reduceTransparency) }
 
     private var attention: AIModeEngine.Attention? {
         if case .needsAttention(let why) = controller.phase { return why }
@@ -79,7 +76,7 @@ struct ResultPanelView: View {
     private var pageLayer: some View {
         if controller.canShowWebPage {
             VStack(spacing: 0) {
-                if let attention {
+                if let attention, isWeb {
                     AttentionBanner(attention: attention) { controller.submitToBrowser() }
                         .padding(.horizontal, PanelMetrics.edgeInset)
                         .padding(.top, 2)
@@ -129,11 +126,12 @@ extension SearchController {
     }
 }
 
-/// The query, what's happening to it, and the handful of things you might
-/// want to do about it — as small glass buttons that merge and split as the
-/// set changes, the way Spotlight's do.
+/// The conversation, what's happening in it, and the handful of things you
+/// might want to do about it — as small glass buttons that merge and split as
+/// the set changes, the way Spotlight's do.
 private struct PanelHeader: View {
     @ObservedObject var controller: SearchController
+    @ObservedObject private var history = ConversationHistory.shared
     /// A material bar behind the row: for the classic look, and over the page,
     /// where there's no scrolling content to dissolve under a bare row.
     var hasBar: Bool
@@ -146,7 +144,7 @@ private struct PanelHeader: View {
                 .frame(width: 20, height: 20)
 
             VStack(alignment: .leading, spacing: 1) {
-                Text(controller.submittedQuery)
+                Text(title)
                     .font(.system(size: 13, weight: .semibold))
                     .lineLimit(1)
                     .truncationMode(.tail)
@@ -177,9 +175,18 @@ private struct PanelHeader: View {
 
     // MARK: Status
 
+    private var title: String {
+        controller.showsHistory ? "Recent Chats" : controller.conversationTitle
+    }
+
     @ViewBuilder
     private var statusGlyph: some View {
-        if controller.isBusy {
+        if controller.showsHistory {
+            Image(systemName: "clock.arrow.circlepath")
+                .font(.system(size: 13, weight: .medium))
+                .foregroundStyle(.secondary)
+                .accessibilityHidden(true)
+        } else if controller.isBusy {
             ProgressView()
                 .controlSize(.small)
                 .accessibilityLabel("Working")
@@ -203,6 +210,10 @@ private struct PanelHeader: View {
 
     /// "Google AI Mode · Answering…" — which provider, and what it's doing.
     private var statusLine: String {
+        if controller.showsHistory {
+            let count = history.summaries.count
+            return count == 0 ? "Nothing yet" : "\(count) saved on this Mac"
+        }
         let status: String
         switch controller.phase {
         case .idle:           status = ""
@@ -212,7 +223,8 @@ private struct PanelHeader: View {
         case .needsAttention: status = "Waiting for you"
         case .failed:         status = "Didn't finish"
         }
-        return [controller.activeProvider?.label ?? "", status]
+        let turns = controller.earlierTurns.count + 1
+        return [controller.activeProvider?.label ?? "", turns > 1 ? "\(turns) questions" : "", status]
             .filter { !$0.isEmpty }
             .joined(separator: " · ")
     }
@@ -220,44 +232,33 @@ private struct PanelHeader: View {
     // MARK: Controls
 
     /// The shortcuts in the tooltips are handled app-wide, by the app
-    /// delegate's key monitor: typing stays in the pill, so this panel is
-    /// almost never the key window and shortcuts attached here would never
-    /// fire.
+    /// delegate's key monitor: typing stays in the pill, so these buttons are
+    /// never focused and shortcuts attached here would never fire.
     private var controls: some View {
         GlassGroup(spacing: 6) {
             HStack(spacing: 6) {
-                if controller.isBusy {
-                    headerButton("Stop", systemImage: "stop.fill", help: "Stop (⌘.)") {
-                        controller.stop()
+                if controller.showsHistory {
+                    if controller.isResultVisible {
+                        headerButton("Back to Chat", systemImage: "arrow.uturn.backward", help: "Back to the chat (esc)") {
+                            controller.closeHistory()
+                        }
                     }
-                } else if controller.offersRetry {
-                    headerButton("Search Again", systemImage: "arrow.clockwise", help: "Search again (⌘R)") {
-                        controller.retry()
+                } else {
+                    answerControls
+                }
+
+                if controller.isResultVisible {
+                    headerButton("New Chat", systemImage: "square.and.pencil", help: "New chat (⌘N)") {
+                        controller.newChat()
                     }
                 }
 
-                if !controller.answer.isEmpty {
-                    headerButton(
-                        justCopied ? "Copied" : "Copy Answer",
-                        systemImage: justCopied ? "checkmark" : "doc.on.doc",
-                        help: "Copy answer (⌘⇧C)"
-                    ) {
-                        copy()
-                    }
-                }
-
-                if showsPageToggle {
-                    headerButton(
-                        controller.prefersWebPage ? "Show Answer" : "Show Google's Page",
-                        systemImage: controller.prefersWebPage ? "text.alignleft" : "globe",
-                        help: controller.prefersWebPage ? "Back to Flyby's answer" : "Show Google's page"
-                    ) {
-                        controller.prefersWebPage.toggle()
-                    }
-                }
-
-                headerButton("Open in Browser", systemImage: "arrow.up.forward.app", help: "Open in your browser (⌘↩)") {
-                    controller.submitToBrowser()
+                headerButton(
+                    controller.showsHistory ? "Hide Recent Chats" : "Recent Chats",
+                    systemImage: "clock.arrow.circlepath",
+                    help: controller.showsHistory ? "Hide recent chats (⌘Y)" : "Recent chats (⌘Y or ↑)"
+                ) {
+                    controller.toggleHistory()
                 }
 
                 headerButton("Close", systemImage: "xmark", help: "Close (esc)") {
@@ -268,6 +269,44 @@ private struct PanelHeader: View {
         .animation(.spring(response: 0.3, dampingFraction: 0.85), value: controller.isBusy)
         .animation(.spring(response: 0.3, dampingFraction: 0.85), value: controller.answer.isEmpty)
         .animation(.spring(response: 0.3, dampingFraction: 0.85), value: showsPageToggle)
+        .animation(.spring(response: 0.3, dampingFraction: 0.85), value: controller.showsHistory)
+    }
+
+    @ViewBuilder
+    private var answerControls: some View {
+        if controller.isBusy {
+            headerButton("Stop", systemImage: "stop.fill", help: "Stop (⌘.)") {
+                controller.stop()
+            }
+        } else if controller.offersRetry {
+            headerButton("Search Again", systemImage: "arrow.clockwise", help: "Search again (⌘R)") {
+                controller.retry()
+            }
+        }
+
+        if !controller.answer.isEmpty {
+            headerButton(
+                justCopied ? "Copied" : "Copy Answer",
+                systemImage: justCopied ? "checkmark" : "doc.on.doc",
+                help: "Copy answer (⌘⇧C)"
+            ) {
+                copy()
+            }
+        }
+
+        if showsPageToggle {
+            headerButton(
+                controller.prefersWebPage ? "Show Answer" : "Show Google's Page",
+                systemImage: controller.prefersWebPage ? "text.alignleft" : "globe",
+                help: controller.prefersWebPage ? "Back to Flyby's answer" : "Show Google's page"
+            ) {
+                controller.prefersWebPage.toggle()
+            }
+        }
+
+        headerButton("Open in Browser", systemImage: "arrow.up.forward.app", help: "Open in your browser (⌘↩)") {
+            controller.submitToBrowser()
+        }
     }
 
     /// Only when there's a page behind the answer, and not while Google is

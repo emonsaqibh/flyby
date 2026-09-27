@@ -184,8 +184,7 @@ hardware: this release hasn't run on a real Mac yet — see
   holds on AZERTY), ⌘Tab, ⌘Space, ⌘`, ⌘⇧3/4/5, ⌃⌘Q and ⌃Space. Esc cancels
   recording instead of becoming the shortcut.
 - Holding a chord down does not repeat-fire; it re-arms only on release.
-- **First launch runs a one-time onboarding flow**: welcome → appearance, accent
-  and (on macOS 26+) Liquid Glass → provider and search engine (with the Gemini
+- **First launch runs a one-time onboarding flow**: welcome → appearance and accent → provider and search engine (with the Gemini
   key field if Gemini is picked) → **Connect your Google account** (only if
   Google AI Mode is picked; skippable) → shortcut recording (pre-filled with the
   default) → Accessibility grant (only if the recorded shape needs it and it
@@ -377,7 +376,7 @@ Settings › Search.
 ### 4.4 Appearance and theming
 - **Light / Dark / System.** Set once on `NSApp`, so the pill, the result panel
   and the Settings window all inherit it. System follows macOS live.
-- **Liquid Glass** (macOS 26+), on by default where supported. The pill is laid
+- **Liquid Glass** (macOS 26+), always — it's the design, not a setting. The pill is laid
   out like Spotlight: a glass bar with the ↩ and provider controls as separate
   glass bubbles that morph out of it as you type. The pill uses the
   *interactive* glass variant that reacts to the pointer; the answer panel uses
@@ -541,8 +540,6 @@ Appearance, Search, Google Account, Advanced**.
 
 ### Appearance
 - **Appearance** — System / Light / Dark (segmented).
-- **Liquid Glass** — toggle, disabled with "Requires macOS 26 or later." below
-  macOS 26.
 - **Accent** — eight swatches, each drawn in its own derived colour.
 
 ### Search

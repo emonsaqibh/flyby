@@ -2,8 +2,7 @@ import SwiftUI
 import AppKit
 import FlybyCore
 
-/// The capsule. Sits centred in an oversized transparent window and animates
-/// its own width, so growing as you type costs no window resizing.
+/// The pill: the text capsule, and the ↩ and provider controls.
 ///
 /// Two layouts, because glass changes what the right shape is. With Liquid
 /// Glass the ↩ badge and the provider chip become small glass bubbles beside
@@ -11,74 +10,45 @@ import FlybyCore
 /// shapes that overlap merge into one, so a glass badge *inside* the capsule
 /// would simply vanish into it. Without glass the classic single capsule,
 /// with both inside it, is the one that reads as a single object.
-struct PillView: View {
-    @ObservedObject var controller: SearchController
-    @ObservedObject private var settings = AppSettings.shared
-    @FocusState private var inputFocused: Bool
-    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+///
+/// Both fold down to a small blob when Flyby isn't presented, which is where
+/// opening springs out from and closing shrinks back to.
 
-    var body: some View {
-        VStack {
-            Spacer(minLength: 0)
-            pill
-            Spacer(minLength: 0)
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .themed()
-        .onAppear { inputFocused = true }
-        .onReceive(NotificationCenter.default.publisher(for: .quickSearchDidShow)) { _ in
-            inputFocused = true
-        }
-    }
-
-    /// Same condition `Surface` uses, so the two can't disagree about whether
-    /// glass is on.
-    @ViewBuilder
-    private var pill: some View {
-        if #available(macOS 26.0, *), settings.liquidGlass, !reduceTransparency {
-            GlassPill(controller: controller, focus: $inputFocused)
-        } else {
-            ClassicPill(controller: controller, focus: $inputFocused)
-        }
-    }
-}
-
-// MARK: - Layouts
-
-/// A glass bar with glass bubbles beside it, rendered together so the bubbles
-/// morph out of the bar as they appear.
+/// A glass bar with glass bubbles beside it. The root view renders it in the
+/// same glass container as the panel, so the bubbles morph out of the bar and
+/// the panel out of the whole pill.
 @available(macOS 26.0, *)
-private struct GlassPill: View {
+struct GlassPill: View {
     @ObservedObject var controller: SearchController
     var focus: FocusState<Bool>.Binding
+    let glass: Namespace.ID
+    let isPresented: Bool
     @ObservedObject private var settings = AppSettings.shared
-    @Namespace private var glass
 
-    private enum Element: Hashable, Sendable {
-        case field, submit, provider
+    enum Element: Hashable, Sendable {
+        case field, submit, provider, panel
     }
 
     var body: some View {
-        // Container spacing equal to the stack's: the bubbles sit apart at
-        // rest and only flow into the bar while they appear or leave. Larger
-        // and they'd melt into it permanently.
-        GlassEffectContainer(spacing: PillMetrics.bubbleSpacing) {
-            HStack(spacing: PillMetrics.bubbleSpacing) {
-                PillField(controller: controller, focus: focus)
-                    .padding(.horizontal, PillMetrics.horizontalPadding)
-                    .frame(width: capsuleWidth, height: PillMetrics.height)
-                    .glassEffect(.regular.interactive(), in: Capsule())
-                    .glassEffectID(Element.field, in: glass)
+        HStack(spacing: PillMetrics.bubbleSpacing) {
+            PillField(controller: controller, focus: focus)
+                .padding(.horizontal, PillMetrics.horizontalPadding)
+                .frame(width: capsuleWidth, height: PillMetrics.height)
+                .opacity(isPresented ? 1 : 0)
+                .clipShape(Capsule())
+                .glassEffect(.regular.interactive(), in: Capsule())
+                .glassEffectID(Element.field, in: glass)
 
-                if hasQuery {
-                    ReturnBadge(style: .bubble) { controller.submit() }
-                        .glassEffect(
-                            .regular.tint(settings.accent.color.opacity(0.22)).interactive(),
-                            in: Circle()
-                        )
-                        .glassEffectID(Element.submit, in: glass)
-                }
+            if isPresented, hasQuery {
+                ReturnBadge(style: .bubble) { controller.submit() }
+                    .glassEffect(
+                        .regular.tint(settings.accent.color.opacity(0.22)).interactive(),
+                        in: Circle()
+                    )
+                    .glassEffectID(Element.submit, in: glass)
+            }
 
+            if isPresented {
                 ProviderMenu(style: .bubble)
                     .glassEffect(.regular.interactive(), in: Capsule())
                     .glassEffectID(Element.provider, in: glass)
@@ -89,14 +59,27 @@ private struct GlassPill: View {
     }
 
     private var hasQuery: Bool { !controller.query.isEmpty }
-    private var capsuleWidth: CGFloat { PillMetrics.glassCapsuleWidth(for: controller.query) }
+
+    /// Folded up, the bar is a circle — the blob Flyby opens out of.
+    private var capsuleWidth: CGFloat {
+        isPresented
+            ? PillMetrics.glassCapsuleWidth(for: controller.query, inConversation: controller.isResultVisible)
+            : PillMetrics.height
+    }
+
+    /// How far the capsule's centre sits left of the row's, once the bubbles
+    /// beside it are counted — where the panel folds down to.
+    static func capsuleOffset(hasQuery: Bool, isPresented: Bool) -> CGFloat {
+        isPresented ? -PillMetrics.glassBubblesWidth(hasQuery: hasQuery) / 2 : 0
+    }
 }
 
-/// One blurred capsule with everything inside it — the pre-glass pill, and
-/// what Reduce Transparency gets.
-private struct ClassicPill: View {
+/// One blurred capsule with everything inside it — the pill without glass
+/// (macOS 14–15, and Reduce Transparency).
+struct ClassicPill: View {
     @ObservedObject var controller: SearchController
     var focus: FocusState<Bool>.Binding
+    let isPresented: Bool
 
     var body: some View {
         HStack(spacing: 10) {
@@ -111,6 +94,7 @@ private struct ClassicPill: View {
         }
         .padding(.horizontal, PillMetrics.horizontalPadding)
         .frame(width: width, height: PillMetrics.height)
+        .opacity(isPresented ? 1 : 0)
         .surface(Capsule(), interactive: true)
         .shadow(
             color: .black.opacity(0.32),
@@ -122,7 +106,12 @@ private struct ClassicPill: View {
     }
 
     private var hasQuery: Bool { !controller.query.isEmpty }
-    private var width: CGFloat { PillMetrics.classicWidth(for: controller.query) }
+
+    private var width: CGFloat {
+        isPresented
+            ? PillMetrics.classicWidth(for: controller.query, inConversation: controller.isResultVisible)
+            : PillMetrics.height
+    }
 }
 
 // MARK: - Pieces
@@ -148,12 +137,12 @@ private struct PillField: View {
                 .animation(.easeOut(duration: 0.2), value: controller.isBusy)
                 .accessibilityHidden(true)
 
-            TextField(PillMetrics.placeholder, text: $controller.query)
+            TextField(PillMetrics.placeholder(inConversation: controller.isResultVisible), text: $controller.query)
                 .textFieldStyle(.plain)
                 .font(.system(size: PillMetrics.fontSize))
                 .focused(focus)
                 .onSubmit { controller.submit() }
-                .accessibilityLabel("Search")
+                .accessibilityLabel(controller.isResultVisible ? "Follow-up question" : "Search")
 
             if BuildFlavor.isDev {
                 DevBadge()
@@ -261,6 +250,13 @@ private struct ProviderMenu: View {
             .labelsHidden()
         }
 
+        Divider()
+        Button {
+            NotificationCenter.default.post(name: .flybyShouldShowHistory, object: nil)
+        } label: {
+            Label("Recent Chats  ↑", systemImage: "clock.arrow.circlepath")
+        }
+
         // AI Mode without an account is the CAPTCHA-prone path; the fix is
         // one click away, so offer it where the choice is made.
         if settings.provider == .aiMode, !google.isConnected {
@@ -308,4 +304,6 @@ private struct ProviderMenu: View {
 
 extension Notification.Name {
     static let quickSearchDidShow = Notification.Name("quickSearchDidShow")
+    /// Opens the history list, from the pill's menu.
+    static let flybyShouldShowHistory = Notification.Name("flybyShouldShowHistory")
 }
