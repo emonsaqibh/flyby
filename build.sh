@@ -82,6 +82,20 @@ echo "› Assembling the app bundle…"
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$BIN" "$APP/Contents/MacOS/Flyby"
+
+# SwiftPM's default build system (from Xcode 27) stamps the binary with the
+# deployment target as its SDK version too: "built with the macOS 14 SDK".
+# macOS picks which generation of its design an app gets from that number —
+# Liquid Glass follows the macOS 27 glass slider only in apps built with the
+# macOS 27 SDK — so write the SDK that was actually used back in.
+SDK_VERSION="$(xcrun --sdk macosx --show-sdk-version)"
+read -r MIN_OS STAMPED_SDK < <(otool -l "$APP/Contents/MacOS/Flyby" \
+  | awk '/LC_BUILD_VERSION/ { found = 1 } found && $1 == "minos" { minos = $2 } found && $1 == "sdk" { print minos, $2; exit }')
+if [[ -n "$MIN_OS" && "$STAMPED_SDK" != "$SDK_VERSION" ]]; then
+  echo "› Stamping the macOS $SDK_VERSION SDK (the build recorded $STAMPED_SDK)…"
+  vtool -set-build-version macos "$MIN_OS" "$SDK_VERSION" -replace \
+    -output "$APP/Contents/MacOS/Flyby" "$APP/Contents/MacOS/Flyby"
+fi
 cp Resources/Info.plist "$APP/Contents/Info.plist"
 PB=/usr/libexec/PlistBuddy
 $PB -c "Set :CFBundleIdentifier $BUNDLE_ID" \
