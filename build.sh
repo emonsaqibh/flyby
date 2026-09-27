@@ -4,6 +4,7 @@
 # Accessibility grant, and can run side by side:
 #
 #   ./build.sh               → build/Flyby Dev.app   com.fringecore.flyby.dev
+#                              and a copy kept in dev-builds/<version>/
 #   ./run.sh                   (the same, then launch it)
 #   CONF=debug ./build.sh      unoptimized, for lldb
 #
@@ -120,3 +121,13 @@ codesign "${sign_args[@]}" "$APP"
 codesign --verify --strict "$APP"
 
 echo "✓ Built $APP ($BUNDLE_ID $VERSION, build $BUILD_NUMBER)"
+
+# Keep every dev build by version, alongside the frozen releases in releases/.
+# Rebuilding the same commit replaces that version's copy.
+if [[ "$FLAVOR" == dev && -z "${OUT_DIR:-}" ]]; then
+  KEEP="dev-builds/$VERSION"
+  rm -rf "$KEEP"
+  mkdir -p "$KEEP"
+  ditto "$APP" "$KEEP/$APP_NAME.app"
+  echo "  kept a copy in ${KEEP}/"
+fi

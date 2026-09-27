@@ -6,7 +6,7 @@ people install, and each version of it is built once and frozen.
 | | Dev | Release |
 | --- | --- | --- |
 | Made by | `./build.sh` · `./run.sh` | `./release.sh <version>` |
-| App | `build/Flyby Dev.app` | `releases/<version>/Flyby.app` → `/Applications/Flyby.app` |
+| App | `build/Flyby Dev.app`, and every build kept in `dev-builds/<version>/` | `releases/<version>/Flyby.app` → `/Applications/Flyby.app` |
 | Bundle ID | `com.fringecore.flyby.dev` | `com.fringecore.flyby` |
 | Version | from git: `0.3.0-dev.14 · pill` | exactly what you pass: `0.3.0`, `0.4.0-beta.1` |
 | Architectures | this Mac's only (fast) | universal (arm64 + x86_64) |
