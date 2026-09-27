@@ -113,7 +113,7 @@ if pgrep -f "$TARGET/Contents/MacOS/" >/dev/null; then
   for _ in $(seq 1 25); do pgrep -f "$TARGET/Contents/MacOS/" >/dev/null || break; sleep 0.2; done
 fi
 
-say "Installing to $DEST…"
+say "Installing to ${DEST}…"
 rm -rf "$TARGET"
 ditto "$APP" "$TARGET"
 version="$(/usr/libexec/PlistBuddy -c 'Print CFBundleShortVersionString' "$TARGET/Contents/Info.plist")"
