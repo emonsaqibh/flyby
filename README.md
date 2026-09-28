@@ -47,6 +47,9 @@ next launch. Flyby notices and offers to move itself; Settings › General keeps
   of the bar lists commands.
 - **New onboarding and Settings,** in the shape of macOS 27's System Settings.
 
+**0.4.1** fixes Google AI Mode follow-ups, which now stay in the same Google
+conversation ([notes](docs/releases/0.4.1.md)).
+
 Full notes: [docs/releases/0.4.0.md](docs/releases/0.4.0.md).
 
 ## First launch
