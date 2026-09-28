@@ -7,6 +7,50 @@ results without leaving whatever app you're in.
 Default trigger is **double-tap Right ⌥**, and it's rebindable to anything —
 see below.
 
+## Install
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/emonsaqibh/flyby/main/install.sh | bash
+```
+
+Needs **macOS 27 on Apple silicon**. That downloads the newest release, puts it
+in Applications and opens it. It's a menu-bar-only app (`LSUIElement`) — no
+Dock icon, nothing in the app switcher; look for the sparkle magnifying glass
+in the menu bar.
+
+- **Why a script:** releases are ad-hoc signed and not notarized yet, and macOS
+  won't open an un-notarized app downloaded in a browser. Files fetched with
+  curl aren't marked as downloads, so it opens normally.
+- **Updating:** Flyby checks for updates by itself; Settings › General ›
+  Updates (**Check Now**) or menu bar › **Check for Updates…** asks right away.
+  When there's one, it hands you the same command.
+- **Betas and pinned versions:** add `-s -- --beta` to include betas, or
+  `-s -- 0.3.0-beta.1` for a specific version. Flyby 0.3 and earlier run from
+  macOS 14; `install.sh` refuses a version your Mac can't open.
+
+**Applications is not optional.** `SMAppService` registers a path for
+open-at-login, and Accessibility permission is bound to the exact bundle it was
+granted to. Run Flyby from a disk image or Downloads and macOS may run it from a
+randomised read-only mount (App Translocation), so both silently break on the
+next launch. Flyby notices and offers to move itself; Settings › General keeps a
+**Move to Applications** button around until it's somewhere real.
+
+## What's new in 0.4
+
+- **Looks like macOS 27's Siri:** an always-dark glass bar at the bottom of the
+  screen that grows up into an answer card.
+- **Follow-ups and Recent Chats:** keep asking in the same conversation. Chats
+  stay on your Mac, and ⌘Y reopens one.
+- **Apple Intelligence:** a fourth provider on Apple's on-device model — no
+  key, no account, and your question never leaves your Mac.
+- **Keyboard map and "/" commands:** ⌘/ shows every shortcut; "/" at the start
+  of the bar lists commands.
+- **New onboarding and Settings,** in the shape of macOS 27's System Settings.
+
+Full notes: [docs/releases/0.4.0.md](docs/releases/0.4.0.md).
+
+## First launch
+
 First launch opens a short, animated onboarding (always dark, Dia-style: a
 drifting glow, headlines that reveal letter by letter, a live demo of the bar):
 provider, shortcut, the Accessibility grant if the shortcut needs one, and a
@@ -43,33 +87,6 @@ Esc cancels recording rather than becoming your shortcut.
 triangle and grows a "Grant Accessibility Permission…" item. That only ever
 applies to modifier-only gestures — if you'd rather not deal with the
 permission, record a key combo instead.
-
-## Install
-
-```sh
-curl -fsSL https://raw.githubusercontent.com/emonsaqibh/flyby/main/install.sh | bash
-```
-
-That downloads the newest release, puts it in Applications and opens it; add
-`-s -- --beta` for betas, or `-s -- 0.3.0` for a specific version. Flyby then
-tells you when there's an update (menu bar › **Check for Updates…**, or
-Settings › General › Updates) and hands you the same command.
-
-Why a script and not a download link: releases aren't notarized yet, and macOS
-won't open an un-notarized app downloaded in a browser. Files fetched with curl
-aren't marked as downloads, so it opens normally.
-
-It's a menu-bar-only app (`LSUIElement`) — no Dock icon, nothing in the app
-switcher; look for the sparkle magnifying glass in the menu bar. Needs macOS 27
-on Apple silicon (Flyby 0.3 and earlier run from macOS 14; `install.sh`
-refuses a version your Mac can't open).
-
-**Applications is not optional.** `SMAppService` registers a path for
-open-at-login, and Accessibility permission is bound to the exact bundle it was
-granted to. Run Flyby from a disk image or Downloads and macOS may run it from a
-randomised read-only mount (App Translocation), so both silently break on the
-next launch. Flyby notices and offers to move itself; Settings › General keeps a
-**Move to Applications** button around until it's somewhere real.
 
 ## Build and run
 
