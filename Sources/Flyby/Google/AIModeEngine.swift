@@ -15,6 +15,11 @@ private let aiModeLog = Logger(subsystem: "com.fringecore.flyby", category: "aim
 /// The page itself stays mounted underneath — invisible, but laid out and
 /// running at full speed — and is revealed only when Google needs the user
 /// (a CAPTCHA, a consent wall, a sign-in) or the page can't be read.
+///
+/// A follow-up is asked in that same page, through AI Mode's own composer,
+/// so Google answers it in the conversation it already has. When the page
+/// can't take one, it's a fresh search whose query carries the conversation
+/// (`AIModeFollowUp`) — never a bare question in a new chat.
 @MainActor
 final class AIModeEngine: ObservableObject {
     enum Attention: Equatable {
@@ -54,6 +59,10 @@ final class AIModeEngine: ObservableObject {
     /// No progress at all for this long ends the search: failed if nothing
     /// came, complete if the answer simply stopped growing.
     private static let stallAfter: UInt64 = 45_000_000_000
+    /// A follow-up sent through the page with nothing of its answer this long
+    /// after is asked again as a search. AI Mode starts answering within a
+    /// few seconds; a page that's silent this long isn't going to.
+    private static let followUpSilentAfter: UInt64 = 20_000_000_000
 
     private let session: GoogleSession
     private let bridge: AIModeWebBridge
@@ -69,10 +78,20 @@ final class AIModeEngine: ObservableObject {
     private var hasLoadedPage = false
     private var stallTimer: Task<Void, Never>?
     private var unreadableTimer: Task<Void, Never>?
+    private var followUpTimer: Task<Void, Never>?
+    /// The page finished answering the latest question, and nothing since
+    /// has taken it from that conversation — so a follow-up can be typed
+    /// into it. Only an answer the page itself called finished counts: not
+    /// one stopped, timed out, failed or waiting on the user.
+    private var isContinuable = false
 
     // Per document.
     private var acceptsMessages = false
     private var pageID: String?
+    /// Which of the document's questions is being answered: 0 for the one it
+    /// loaded with, then one more per follow-up. The extractor tags every
+    /// message with it.
+    private var pageTurn = 0
     private var pageGeneration = 0
     private var lastAccountReport: AccountReport?
     private var readerRequested: Bool?
@@ -146,9 +165,11 @@ final class AIModeEngine: ObservableObject {
         searchID += 1
         isSearchActive = true
         isFrozen = false
+        isContinuable = false
         userRevealedPage = false
         acceptsMessages = false
         pageID = nil
+        pageTurn = 0
         hasLoadedPage = true
         snapshot = .empty
         transition(to: .loading)
@@ -167,10 +188,72 @@ final class AIModeEngine: ObservableObject {
         }
     }
 
+    /// Asks `question` in the conversation on the page, through AI Mode's own
+    /// composer, so Google answers it with everything asked before. When the
+    /// page can't take it — there's no finished conversation on it, the
+    /// composer isn't where it was, or the page never starts answering — it's
+    /// a search for `fallback` instead, which carries the conversation in
+    /// the query.
+    ///
+    /// The caller has to know the page's conversation is this chat's: every
+    /// way of leaving a chat (`reset()`, and `stop()` when another provider
+    /// takes a turn) ends it here too.
+    func followUp(_ question: String, orSearch fallback: String) {
+        let trimmed = question.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        guard canContinueOnPage else {
+            aiModeLog.info("Follow-up: no conversation on the page to continue; searching with it in the query")
+            search(fallback)
+            return
+        }
+
+        // The same document carries on, so its extractor isn't frozen: it's
+        // told which question it's reading now instead.
+        cancelTimers()
+        searchID += 1
+        isSearchActive = true
+        isFrozen = false
+        isContinuable = false
+        userRevealedPage = false
+        pageTurn += 1
+        snapshot = .empty
+        transition(to: .loading)
+        armStallTimer()
+
+        let id = searchID
+        let turn = pageTurn
+        Task { [weak self] in
+            guard let self else { return }
+            let result = await self.webView.flybyCallAsync(
+                "var f = window.__flyby; return f && f.followUp ? await f.followUp(question, turn) : 'no-extractor';",
+                arguments: ["question": trimmed, "turn": turn],
+                in: Self.contentWorld
+            )
+            guard id == self.searchID, self.isSearchActive, !self.isFrozen else { return }
+            if result == "sent" {
+                aiModeLog.info("Follow-up asked in Google's conversation (turn \(turn, privacy: .public))")
+                self.armFollowUpTimer(fallback: fallback)
+            } else {
+                aiModeLog.error("Follow-up couldn't be asked in the page (\(result ?? "no result", privacy: .public)); searching with the conversation in the query")
+                self.search(fallback)
+            }
+        }
+    }
+
+    /// The page holds a finished conversation it can be asked more in.
+    private var canContinueOnPage: Bool {
+        if AIModeDebug.forcesFallback { return false }
+        guard isContinuable, isSearchActive, !isFrozen, state == .complete,
+              acceptsMessages, pageID != nil, !webView.isLoading,
+              let url = webView.url, AIModePage.isResultsPage(url) else { return false }
+        return true
+    }
+
     /// Stops loading and freezes the answer as it stands.
     func stop() {
         guard isSearchActive, !isFrozen else { return }
         isFrozen = true
+        isContinuable = false
         if webView.isLoading { webView.stopLoading() }
         freezePage()
         cancelTimers()
@@ -196,6 +279,7 @@ final class AIModeEngine: ObservableObject {
         cancelTimers()
         isSearchActive = false
         isFrozen = false
+        isContinuable = false
         userRevealedPage = false
         state = .idle
         snapshot = .empty
@@ -243,7 +327,7 @@ final class AIModeEngine: ObservableObject {
             aiModeLog.error("Extractor error: \(error, privacy: .public)")
         }
         reportAccount(from: message)
-        guard isSearchActive, !isFrozen else { return }
+        guard isSearchActive, !isFrozen, message.turn == pageTurn else { return }
         apply(message)
     }
 
@@ -265,6 +349,8 @@ final class AIModeEngine: ObservableObject {
             }
             unreadableTimer?.cancel()
             unreadableTimer = nil
+            followUpTimer?.cancel()
+            followUpTimer = nil
             if next != snapshot {
                 snapshot = next
                 armStallTimer()
@@ -273,6 +359,7 @@ final class AIModeEngine: ObservableObject {
                 stallTimer?.cancel()
                 stallTimer = nil
                 transition(to: .complete)
+                isContinuable = true
             } else {
                 transition(to: .streaming)
             }
@@ -333,6 +420,10 @@ final class AIModeEngine: ObservableObject {
     fileprivate func didCommit() {
         acceptsMessages = true
         pageID = nil
+        // A new document starts its questions from 0, and whatever
+        // conversation it shows, it isn't one Flyby has read to the end.
+        pageTurn = 0
+        isContinuable = false
         lastAccountReport = nil
         readerRequested = nil
         pageGeneration = session.cookieGeneration
@@ -355,6 +446,7 @@ final class AIModeEngine: ObservableObject {
         if nsError.domain == "WebKitErrorDomain", nsError.code == 102 || nsError.code == 204 { return }
         guard isSearchActive, !isFrozen, state != .complete else { return }
         aiModeLog.error("Load failed: \(nsError.domain, privacy: .public) \(nsError.code, privacy: .public)")
+        isContinuable = false
         cancelTimers()
         transition(to: .failed(nsError.localizedDescription))
     }
@@ -362,6 +454,7 @@ final class AIModeEngine: ObservableObject {
     fileprivate func contentProcessDidTerminate() {
         aiModeLog.error("The page's web content process terminated")
         acceptsMessages = false
+        isContinuable = false
         pageID = nil
         hasLoadedPage = false
         guard isSearchActive, !isFrozen else { return }
@@ -413,11 +506,28 @@ final class AIModeEngine: ObservableObject {
         }
     }
 
+    /// Sent, but is the page answering? If nothing of the answer shows up,
+    /// the follow-up is asked as a search instead: slower, but an answer.
+    private func armFollowUpTimer(fallback: String) {
+        followUpTimer?.cancel()
+        let id = searchID
+        followUpTimer = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: AIModeEngine.followUpSilentAfter)
+            guard !Task.isCancelled, let self else { return }
+            guard id == self.searchID, self.isSearchActive, !self.isFrozen,
+                  self.state == .loading, self.snapshot.isEmpty else { return }
+            aiModeLog.error("The page took the follow-up but never answered it; searching with the conversation in the query")
+            self.search(fallback)
+        }
+    }
+
     private func cancelTimers() {
         stallTimer?.cancel()
         stallTimer = nil
         unreadableTimer?.cancel()
         unreadableTimer = nil
+        followUpTimer?.cancel()
+        followUpTimer = nil
     }
 
     private func stallTimerFired(searchID id: Int) {
@@ -466,6 +576,7 @@ final class AIModeEngine: ObservableObject {
             aiModeLog.info("Google needs the user: \(String(describing: why), privacy: .public)")
         }
         cancelTimers()
+        isContinuable = false
         transition(to: .needsAttention(why))
     }
 

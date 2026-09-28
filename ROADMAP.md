@@ -107,7 +107,7 @@ cookie-backed YouTube Music client:
 | S9 | No stop, retry or copy | ✅ Header buttons + ⌘. / ⌘R / ⌘⇧C |
 | S10 | Result panel could open on a different display than the pill | ✅ Opens on the pill's screen |
 | S11 | Query history / recents | ⏳ Needs a privacy decision ❓ |
-| S12 | Follow-up conversation in AI Mode (typing into Google's composer) | ⏳ Follow-up chips exist; a true thread is next |
+| S12 | Follow-up conversation in AI Mode (typing into Google's composer) | ✅ Typed into AI Mode's own composer, so Google keeps the thread; a search carrying the conversation when the page can't continue (Recent Chats, a failed page, another provider's turn). Checked against live Google with the dev build's `-FlybyDebugAsk`/`-FlybyDebugFollowUp` |
 | S13 | A private, offline provider | ✅ Apple Intelligence (FoundationModels, on-device): streams, carries follow-ups, prewarms as the pill opens; 🟡 run in the app on a real Mac |
 
 ### Hotkeys and input

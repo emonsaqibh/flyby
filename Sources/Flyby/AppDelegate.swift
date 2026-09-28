@@ -84,6 +84,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             showOnboarding()
         }
         openDebugWindowIfAsked()
+        AIModeDebug.runIfAsked(controller) { [weak self] in self?.showFlyby() }
         // Never prompts, so it's fine alongside onboarding. A session the
         // browser has since rotated is what sends AI Mode's first search
         // into a CAPTCHA.

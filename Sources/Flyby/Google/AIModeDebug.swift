@@ -1,0 +1,198 @@
+import AppKit
+import os
+import FlybyCore
+
+private let debugLog = Logger(subsystem: "com.fringecore.flyby", category: "debug")
+
+/// Dev builds only: launch arguments that run an AI Mode conversation without
+/// anyone typing, and log what came back — so follow-ups can be checked
+/// against real Google from a script. They land in the volatile arguments
+/// domain, so nothing is remembered, and a release build ignores them all:
+///
+///     open "build/Flyby Dev.app" --args -FlybyDebugShowPanel YES \
+///         -FlybyDebugAsk "iPhone 16 Pro performance" \
+///         -FlybyDebugFollowUp "what is its AnTuTu score?"
+///
+/// - `-FlybyDebugAsk <question>`: asks it of AI Mode, whatever the provider
+///   setting says.
+/// - `-FlybyDebugShowPanel YES`: opens Flyby first and asks in it, so the
+///   page is in a window on screen, as it is for a user. Without it there's
+///   no window at all, and Google's page doesn't render — its composer then
+///   takes only the first follow-up. A click elsewhere closes Flyby and ends
+///   the chat, as it would for anyone.
+/// - `-FlybyDebugFollowUp <question>`: asked once the first answer is in, as
+///   a follow-up in the same chat.
+/// - `-FlybyDebugThen <question>`: a second follow-up, after the first.
+/// - `-FlybyDebugRetry YES`: then asks the last question again, as ⌘R does.
+/// - `-FlybyDebugReopen YES`: before the follow-up, puts the chat away and
+///   reopens it from history, as Recent Chats does — so there's no page to
+///   continue.
+/// - `-FlybyDebugForceFallback YES`: the engine never continues on its page,
+///   as if the composer had gone.
+/// - `-FlybyDebugProbe <path>`: after each answer, writes what the page's
+///   composer and turns look like to `<path>.<n>.json` — the first thing to
+///   look at when Google changes its markup.
+///
+/// Each answer's first 300 characters are logged publicly under the `debug`
+/// category, and the engine logs (under `aimode`) which way each follow-up
+/// went:
+///
+///     log show --last 5m --info \
+///         --predicate 'subsystem == "com.fringecore.flyby"'
+@MainActor
+enum AIModeDebug {
+    /// `-FlybyDebugForceFallback YES`.
+    static var forcesFallback: Bool { flag("FlybyDebugForceFallback") }
+
+    /// `showPanel` opens Flyby as the hot key does.
+    static func runIfAsked(_ controller: SearchController, showPanel: @escaping () -> Void) {
+        guard let first = string("FlybyDebugAsk") else { return }
+        let followUp = string("FlybyDebugFollowUp")
+        Task { @MainActor in
+            if flag("FlybyDebugShowPanel") {
+                showPanel()
+                try? await Task.sleep(nanoseconds: 600_000_000)
+            }
+            debugLog.info("Q1: \(first, privacy: .public)")
+            await ask("Q1", of: controller, step: 1) { controller.send(first, with: .aiMode) }
+
+            guard let followUp else { return finish() }
+            if flag("FlybyDebugReopen") {
+                guard await reopen(controller, titled: first) else { return finish() }
+            }
+            debugLog.info("Q2: \(followUp, privacy: .public)")
+            let composed = AIModeFollowUp.query(followUp, after: controller.earlierTurns + [liveTurn(controller)])
+            debugLog.info("Q2 as a search, if it comes to that: \(composed, privacy: .public)")
+            await ask("Q2", of: controller, step: 2) { controller.send(followUp, with: .aiMode) }
+
+            if let then = string("FlybyDebugThen") {
+                debugLog.info("Q3: \(then, privacy: .public)")
+                await ask("Q3", of: controller, step: 3) { controller.send(then, with: .aiMode) }
+            }
+            if flag("FlybyDebugRetry") {
+                debugLog.info("Retrying the last question")
+                await ask("Retried", of: controller, step: 4) { controller.retry() }
+            }
+            finish()
+        }
+    }
+
+    /// Does `action`, waits for the turn to settle, and reports on it.
+    private static func ask(_ label: String, of controller: SearchController, step: Int, _ action: () -> Void) async {
+        action()
+        await settle(controller)
+        report(controller, label: label)
+        await probe(controller, step: step)
+    }
+
+    private static func finish() {
+        debugLog.info("Debug run finished")
+    }
+
+    /// Stands in for the live turn when predicting the fallback query; only
+    /// its question and answer matter.
+    private static func liveTurn(_ controller: SearchController) -> ConversationTurn {
+        ConversationTurn(query: controller.submittedQuery, provider: ProviderKind.aiMode.rawValue, answer: controller.answer)
+    }
+
+    /// New Chat, then the chat picked from Recent Chats.
+    private static func reopen(_ controller: SearchController, titled title: String) async -> Bool {
+        controller.newChat()
+        for _ in 0..<40 {
+            if let summary = controller.history.summaries.first(where: { $0.title == title }) {
+                controller.openConversation(summary.id)
+                for _ in 0..<40 where !controller.isRestored {
+                    try? await Task.sleep(nanoseconds: 100_000_000)
+                }
+                debugLog.info("Reopened the chat from history (restored: \(controller.isRestored, privacy: .public))")
+                return controller.isRestored
+            }
+            try? await Task.sleep(nanoseconds: 100_000_000)
+        }
+        debugLog.error("The chat never showed up in history")
+        return false
+    }
+
+    /// Until the turn is done one way or another, or two minutes pass.
+    private static func settle(_ controller: SearchController) async {
+        for _ in 0..<240 {
+            try? await Task.sleep(nanoseconds: 500_000_000)
+            switch controller.phase {
+            case .complete, .failed, .needsAttention: return
+            case .idle, .working, .streaming: continue
+            }
+        }
+    }
+
+    private static func report(_ controller: SearchController, label: String) {
+        let text = String(controller.answer.bodyText.prefix(300)).replacingOccurrences(of: "\n", with: " ")
+        debugLog.info("\(label, privacy: .public) [\(String(describing: controller.phase), privacy: .public)] bubble: \"\(controller.submittedQuery, privacy: .public)\" answer: \(text, privacy: .public)")
+    }
+
+    private static func probe(_ controller: SearchController, step: Int) async {
+        guard let base = string("FlybyDebugProbe") else { return }
+        let json = await controller.aiMode.webView.flybyString(probeScript, in: AIModeEngine.contentWorld) ?? "null"
+        let path = "\(base).\(step).json"
+        do {
+            try json.write(toFile: path, atomically: true, encoding: .utf8)
+            debugLog.info("Page described in \(path, privacy: .public)")
+        } catch {
+            debugLog.error("Couldn't write \(path, privacy: .public): \(error.localizedDescription, privacy: .public)")
+        }
+    }
+
+    private static func string(_ key: String) -> String? {
+        guard BuildFlavor.isDev else { return nil }
+        return UserDefaults.standard.string(forKey: key)
+    }
+
+    private static func flag(_ key: String) -> Bool {
+        BuildFlavor.isDev && UserDefaults.standard.bool(forKey: key)
+    }
+
+    /// The URL, the turns with the start of each one's text, and every text
+    /// field with its chain of ancestors and the buttons around it.
+    private static let probeScript = #"""
+(function () {
+  function attrs(el) {
+    var a = {};
+    for (var i = 0; i < el.attributes.length; i++) {
+      var at = el.attributes[i];
+      if (at.name !== 'style') a[at.name] = String(at.value).slice(0, 140);
+    }
+    return a;
+  }
+  function describe(el) {
+    var r = el.getBoundingClientRect();
+    return { tag: el.localName, attrs: attrs(el), rect: [r.x | 0, r.y | 0, r.width | 0, r.height | 0],
+             text: (el.innerText || el.textContent || '').trim().replace(/\s+/g, ' ').slice(0, 80) };
+  }
+  function hook(el) {
+    return el.localName + ['data-xid', 'jsname', 'role', 'data-container-id'].map(function (n) {
+      return el.getAttribute(n) ? '[' + n + '=' + el.getAttribute(n) + ']' : '';
+    }).join('');
+  }
+  var out = { url: location.href, title: document.title, fields: [], turns: [] };
+  var turns = document.querySelectorAll('[data-tr-rsts]');
+  for (var t = 0; t < turns.length; t++) {
+    var turn = turns[t];
+    out.turns.push({ parent: turn.parentElement && hook(turn.parentElement),
+                     answers: turn.querySelectorAll('[data-container-id="main-col"]').length,
+                     footers: turn.querySelectorAll('[data-xid="Gd7Hsc"]').length,
+                     text: (turn.innerText || '').trim().replace(/\s+/g, ' ').slice(0, 400) });
+  }
+  var fields = document.querySelectorAll('textarea, input:not([type=hidden]), [contenteditable]:not([contenteditable=false]), [role=textbox]');
+  for (var i = 0; i < fields.length; i++) {
+    var field = describe(fields[i]);
+    field.ancestors = [];
+    var p = fields[i].parentElement;
+    for (var k = 0; k < 8 && p; k++, p = p.parentElement) field.ancestors.push(hook(p));
+    var around = fields[i];
+    for (var up = 0; up < 6 && around.parentElement; up++) around = around.parentElement;
+    field.buttons = Array.prototype.slice.call(around.querySelectorAll('button, [role=button]'), 0, 20).map(describe);
+    out.fields.push(field);
+  }
+  return JSON.stringify(out, null, 1);
+})()
+"""#
+}

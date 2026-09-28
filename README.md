@@ -236,9 +236,13 @@ turns the other springs into short fades.
 
 Once an answer is on screen, the input along the bottom of the card is the chat
 box: the cursor stays in it, it says "Ask a follow-up", and whatever you ask
-next is added to the conversation above rather than replacing it. Gemini and Apple Intelligence
-answer follow-ups in the context of the conversation so far; Google AI Mode
-answers each question on its own. **New Chat** (⌘N, or in the provider
+next is added to the conversation above rather than replacing it. Every
+provider answers a follow-up in the context of the conversation so far. Gemini
+and Apple Intelligence are sent the earlier turns; Google AI Mode is asked the
+follow-up in its own conversation, typed into the page Flyby already has open.
+Where that page can't carry on — a chat reopened from Recent Chats, or one
+another provider answered part of — the earlier questions and the start of the
+last answer go into the search with it. **New Chat** (⌘N, or in the provider
 button's menu) starts over.
 
 Every chat is saved on your Mac — one small file per chat in

@@ -202,6 +202,13 @@ import Testing
     @Test func carriesScriptErrors() throws {
         #expect(try AIModeMessage.decode(#"{"error": "TypeError: x"}"#).error == "TypeError: x")
     }
+
+    @Test func readsWhichTurnItIsAbout() throws {
+        #expect(try AIModeMessage.decode(#"{"kind": "answer", "turn": 2}"#).turn == 2)
+        // The page it loaded with, when an older script doesn't say.
+        #expect(try AIModeMessage.decode(#"{"kind": "answer"}"#).turn == 0)
+        #expect(try AIModeMessage.decode(#"{"kind": "answer", "turn": "two"}"#).turn == 0)
+    }
 }
 
 @Suite struct GoogleAccountLabelTests {

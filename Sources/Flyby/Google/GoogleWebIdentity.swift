@@ -83,6 +83,21 @@ extension WKWebView {
         evaluateJavaScript(script, in: nil, in: world, completionHandler: nil)
     }
 
+    /// Runs `body` as the body of an async function in `world`, with
+    /// `arguments` as its parameters, and returns what it resolves to if
+    /// that's a string. Arguments travel as values, never spliced into the
+    /// source, so any text is safe to pass.
+    func flybyCallAsync(_ body: String, arguments: [String: Any], in world: WKContentWorld) async -> String? {
+        await withCheckedContinuation { (continuation: CheckedContinuation<String?, Never>) in
+            callAsyncJavaScript(body, arguments: arguments, in: nil, in: world) { result in
+                switch result {
+                case .success(let value): continuation.resume(returning: value as? String)
+                case .failure:            continuation.resume(returning: nil)
+                }
+            }
+        }
+    }
+
     /// Runs `script` in `world` and returns its result if it's a string.
     func flybyString(_ script: String, in world: WKContentWorld) async -> String? {
         await withCheckedContinuation { (continuation: CheckedContinuation<String?, Never>) in

@@ -331,6 +331,19 @@ name) for Browser.
   as finished when Google's answer footer is present and nothing has changed for
   1.3 s, or after 10 s of no change if the footer never appears. The page runs
   unthrottled while hidden.
+- **Follow-ups continue Google's own conversation.** While the page still holds
+  the chat — its last answer finished there, and nothing since has left it —
+  a follow-up is typed into AI Mode's composer on that page and sent, the way
+  a user would (focus, the text through the field's value setter and an
+  `input` event, then its Send button; Return if that doesn't take). Google
+  keeps the thread server-side, and the extractor reads only the new turn.
+  Otherwise — a chat reopened from Recent Chats, a relaunch, a page that failed,
+  was stopped or is waiting on the user, a turn another provider answered, or a
+  composer that won't take the question — the follow-up is a fresh AI Mode
+  search whose query carries the earlier questions and the start of the last
+  answer (at most 1,200 UTF-8 bytes, the new question last and whole). The
+  question bubble and history always hold just what was typed. A follow-up the
+  page takes but never starts answering within 20 s is asked that way too.
 - **When Google wants you, the page is revealed in place.** A CAPTCHA
   (`/sorry/`, reCAPTCHA form or frame), an EU consent wall (`consent.*` or its
   form) or a sign-in (`accounts.*`) — detected from URLs and form/iframe hooks,
@@ -353,8 +366,9 @@ name) for Browser.
   on screen for its content — never on a CAPTCHA, consent or sign-in page:
   masthead, nav tabs, search box, sign-in link, left rail, footer, anything
   `position: fixed`/`sticky` and smaller than the viewport (composers, cookie
-  banners), and the query echoed back as a bubble. Selectors are structural and
-  role-based. It can be turned off if it ever hides too much.
+  banners), and — on a page with a single answer — the query echoed back as a
+  bubble. Selectors are structural and role-based. It can be turned off if it
+  ever hides too much.
 - **Links:** on the revealed page, a link opens in your default browser and
   dismisses Flyby (except mid-CAPTCHA/consent/sign-in); `target=_blank` and
   `window.open` also go to your browser. Cited sources have Google's `/url?q=`
@@ -815,8 +829,6 @@ Hunt, where "what it doesn't do" comments arrive within the hour.
 - **It is not a launcher.** No app launching, no file search, no calculator, no
   clipboard history, no window management, no snippets, no extensions.
 - **No search history or recents.** Every summon starts clean.
-- **No follow-up conversation.** Each query is answered on its own; neither
-  provider keeps a thread.
 - **English UI.** Every interface string is English; there's no localization
   yet. AI Mode itself asks Google for your macOS language (`hl`) and pins no
   region (`gl`), so Google's answer may come back in your language.
@@ -839,11 +851,15 @@ Hunt, where "what it doesn't do" comments arrive within the hour.
 - **AI Mode is inherently fragile.** It reads Google's page, so it depends on
   Google's markup; the extractor keys on `data-*` hooks rather than class names
   and falls back to showing Google's page, but it will need maintenance when
-  Google changes things. Google's terms don't permit automated access to Search;
-  Flyby loads only the page you asked for, one per search, in your own session —
-  but get a legal read before charging for it. **Gemini is the durable path to an
-  inline answer; AI Mode is the zero-setup one.** This framing should appear on
-  the website — it turns a weakness into an honest recommendation.
+  Google changes things. Follow-ups lean on it most: they're typed into AI
+  Mode's own composer, found by its `data-xid` hooks, and when that fails they
+  fall back to a search that carries the conversation as text — which Google
+  answers well, but not as its own thread. Google's terms don't permit
+  automated access to Search; Flyby loads only the page you asked for, one per
+  search, in your own session — but get a legal read before charging for it.
+  **Gemini is the durable path to an inline answer; AI Mode is the zero-setup
+  one.** This framing should appear on the website — it turns a weakness into
+  an honest recommendation.
 - **CAPTCHAs are rarer, not gone.** Running in your own Google session is meant
   to make them much rarer than for the anonymous client Flyby used to be (not yet
   confirmed on hardware). When one does appear it's shown in place, and what
@@ -1324,7 +1340,6 @@ Do **not** write any of these. They are false today.
   account
 - ❌ "End-to-end encrypted"
 - ❌ "Search your files / apps / clipboard" — it does none of these
-- ❌ "Conversation" / "follow-up questions" / "chat" — single-shot only
 - ❌ "Search history" / "recents" — deliberately absent
 - ❌ "Supports OpenAI / Claude / local models" — Gemini only
 - ❌ "No permissions required" **without** the "if you use a key-combo shortcut"
@@ -1404,8 +1419,6 @@ paragraph of the PH comment and for replying to feature requests.
 
 **High value, larger effort**
 - More AI providers: OpenAI, Claude, local models via Ollama
-- Follow-up questions (turn the panel into a short thread; for AI Mode, typing
-  into Google's own composer)
 - Custom search engine with a `%s` template
 - Bang-style prefixes to switch provider inline (`!g`, `!ai`)
 - Per-query provider override without changing the default

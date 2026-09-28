@@ -56,7 +56,20 @@ enum AIModeScript {
     ///   isn't enough), or 10 s without change if the footer never shows;
     /// - CAPTCHA / consent / sign-in from the URL and form/iframe hooks, never
     ///   from English text, so `hl` can follow the user's language.
+    /// - follow-ups (live page, 2026-09-28): the composer is the textarea in
+    ///   `[data-xid="aim-mars-input-plate"]`, sent with
+    ///   `button[data-xid="input-plate-send-button"]`, which stays hidden
+    ///   until the page has read text from an `input` event; Google focuses
+    ///   the composer after each answer. Each answer is a new
+    ///   `[data-tr-rsts]` turn in the same turn root, with its own footer; the
+    ///   document stays, and the URL keeps the first question as `q` while
+    ///   its `mstk` token changes. Only a page that renders — in a window on
+    ///   screen, as Flyby's is while a chat is open — takes more than one
+    ///   follow-up: out of any window, the second is ignored.
     ///
+    /// `__flyby.followUp(question, turn)` asks a follow-up in the page and
+    /// resolves to `"sent"` or the reason it couldn't be; from then on only
+    /// the newer turn is read, and every message carries `turn`.
     /// `__flyby.read({href})` returns the payload without posting, for tests.
     static let extractor = #"""
 // Runs at document end, in Flyby's own content world. Reads Google AI Mode's
@@ -636,11 +649,36 @@ enum AIModeScript {
     return out;
   }
 
+  function turnsOf() {
+    var turns = document.querySelectorAll('[data-xid="aim-mars-turn-root"] > [data-tr-rsts]');
+    if (!turns.length) turns = document.querySelectorAll('[data-xid="aim-mars-turn-root"] [data-tr-rsts]');
+    return turns;
+  }
+
+  // Answers on the page so far: turns, and answer bodies in case the turn
+  // markup is ever gone.
+  function answerCount() {
+    return { turns: turnsOf().length, mains: outermost(document.querySelectorAll(MAIN)).length };
+  }
+
+  // Set while a follow-up asked in the page is being answered: what was on
+  // the page when it was sent. Everything up to there is an earlier answer,
+  // and must never be read as this one.
+  var base = null;
+
   // The answer body is the last turn's last main-col. A new turn that has no
   // answer yet means "loading", not "show the previous turn's answer".
   function findRoot() {
-    var turns = document.querySelectorAll('[data-xid="aim-mars-turn-root"] > [data-tr-rsts]');
-    if (!turns.length) turns = document.querySelectorAll('[data-xid="aim-mars-turn-root"] [data-tr-rsts]');
+    var turns = turnsOf();
+    if (base) {
+      if (base.turns) {
+        if (turns.length <= base.turns) return null;
+        var fresh = outermost(turns[turns.length - 1].querySelectorAll(MAIN));
+        return fresh.length ? fresh[fresh.length - 1] : null;
+      }
+      var bodies = outermost(document.querySelectorAll(MAIN));
+      return bodies.length > base.mains ? bodies[bodies.length - 1] : null;
+    }
     if (turns.length) {
       var mains = outermost(turns[turns.length - 1].querySelectorAll(MAIN));
       if (mains.length) return mains[mains.length - 1];
@@ -728,7 +766,7 @@ enum AIModeScript {
           blocks = cleanBlocks(blocks);
           sources = buildSources(acc, scopeOf(root));
         }
-        kind = consentKind(host, blocks.length > 0) ||
+        kind = consentKind(host, blocks.length > 0 || !!base) ||
           (/^accounts\./.test(host) && isGoogleHost(host) ? 'signIn' : null);
         if (kind) { blocks = []; sources = []; root = null; }
       }
@@ -755,6 +793,7 @@ enum AIModeScript {
         payload: {
           v: 1,
           pageId: F.pageId,
+          turn: F.turn,
           kind: kind || (blocks.length ? 'answer' : 'loading'),
           blocks: blocks,
           sources: sources,
@@ -791,8 +830,11 @@ enum AIModeScript {
   }
 
   // AI Mode echoes the query as a bubble above the answer; Flyby's own bubble
-  // already shows it.
+  // already shows it. Only on a page with one answer: on a conversation the
+  // echoes are what separate the answers, and the URL's `q` stays the first
+  // question however many follow-ups are asked.
   function hideQueryEcho() {
+    if (turnsOf().length > 1) return;
     var query = new URLSearchParams(location.search).get('q');
     if (!query) return;
     var needle = query.trim().toLowerCase();
@@ -846,7 +888,7 @@ enum AIModeScript {
     try {
       result = compute({});
     } catch (e) {
-      result = { payload: { v: 1, pageId: F.pageId, kind: 'loading', blocks: [], sources: [], followUps: [], isComplete: false, signedIn: null, accountLabel: null, error: String(e && e.message || e) }, recheck: 0 };
+      result = { payload: { v: 1, pageId: F.pageId, turn: F.turn, kind: 'loading', blocks: [], sources: [], followUps: [], isComplete: false, signedIn: null, accountLabel: null, error: String(e && e.message || e) }, recheck: 0 };
     }
     try { applyReader(result.payload.kind); } catch (e) {}
     var json = JSON.stringify(result.payload);
@@ -874,6 +916,109 @@ enum AIModeScript {
     attributes: true,
     attributeFilter: ['style', 'class', 'hidden', 'aria-hidden', 'href', 'aria-label', 'data-complete']
   });
+
+  // MARK: - Follow-ups
+
+  var PLATE = '[data-xid="aim-mars-input-plate"]';
+  var SEND = 'button[data-xid="input-plate-send-button"]';
+
+  // Which question the page is answering: 0 for the one it loaded with, then
+  // the number Swift gives each follow-up. Swift drops messages about any
+  // other, so a read that was already on its way can't land on a new turn.
+  F.turn = 0;
+
+  function sleep(ms) { return new Promise(function (resolve) { setTimeout(resolve, ms); }); }
+
+  async function waitUntil(test, ms) {
+    var end = Date.now() + ms;
+    while (!test()) {
+      if (Date.now() > end) return false;
+      await sleep(50);
+    }
+    return true;
+  }
+
+  // Shown and enabled: the send button is hidden while the composer is empty
+  // (and keeps no `disabled` then), and appears once the page has read some
+  // text from it.
+  function ready(button) {
+    return !button.disabled && button.getAttribute('aria-disabled') !== 'true' &&
+      getComputedStyle(button).display !== 'none';
+  }
+
+  // Puts text in the composer the way typing does: through the prototype's
+  // value setter, which a framework tracking the field's value can't miss,
+  // then the input event the page's own listeners wait for.
+  function typeInto(box, text) {
+    Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set.call(box, text);
+    box.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: text }));
+  }
+
+  // Asks `question` in AI Mode's own composer, so Google answers it in this
+  // conversation. Resolves to 'sent' once the page has taken it, or to why it
+  // couldn't be sent — then Swift asks some other way, and the composer is
+  // left empty.
+  F.followUp = async function (question, turn) {
+    if (F.stopped) return 'stopped';
+    var plate = document.querySelector(PLATE);
+    var box = plate && plate.querySelector('textarea');
+    var send = plate && plate.querySelector(SEND);
+    if (!box || !send) return 'no-composer';
+    var before = answerCount();
+    if (!before.turns && !before.mains) return 'no-answer-on-page';
+
+    base = before;
+    F.turn = turn;
+    lastSig = null;
+    lastChangeAt = Date.now();
+    doneRoot = null;
+    lastJSON = null;
+    schedule();
+
+    function taken() {
+      var now = answerCount();
+      return now.turns > base.turns || now.mains > base.mains;
+    }
+
+    // Reader mode hides the composer (it's pinned chrome), and a hidden field
+    // can't be focused. It's off by now — a new question hides the page — but
+    // only on the next read; the next read puts it back if it's wanted.
+    document.documentElement.removeAttribute(READER_ATTR);
+
+    // As a user would: into the composer first — Google focuses it after
+    // each answer, but a click around the revealed page moves focus
+    // elsewhere. Emptied, so a leftover draft can't ride along, then typed;
+    // the pauses let the page's own handlers run.
+    var focused = document.activeElement !== box;
+    if (focused) { try { box.focus({ preventScroll: true }); } catch (e) {} }
+    typeInto(box, '');
+    await waitUntil(function () { return !ready(send); }, 500);
+    typeInto(box, question);
+    await sleep(150);
+    await waitUntil(function () { return ready(send); }, 1500);
+    if (F.stopped) return 'stopped';
+
+    var how = ready(send) ? 'click' : 'return';
+    if (how === 'click') send.click();
+    var sent = how === 'click' && await waitUntil(taken, 1500);
+    if (!sent && how === 'click' && send.disabled) {
+      // The button disables itself when the page takes a question: it's on
+      // its way, so Return now would ask it twice.
+      sent = await waitUntil(taken, 3000);
+    }
+    if (!sent && !F.stopped) {
+      // Return in the composer is the other way the page sends.
+      box.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true, cancelable: true }));
+      how += '+return';
+      sent = await waitUntil(taken, 3000);
+    }
+    if (!sent) {
+      typeInto(box, '');
+      if (focused) { try { box.blur(); } catch (e) {} }
+      return 'not-sent (' + how + ', send ' + (ready(send) ? 'ready' : 'not ready') + ')';
+    }
+    return 'sent';
+  };
 
   F.onStop = function () {
     observer.disconnect();

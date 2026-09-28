@@ -4,7 +4,7 @@ import Foundation
 ///
 /// The script posts a JSON string whenever what it reads changes:
 ///
-///     {"v": 1, "pageId": "…", "kind": "answer",
+///     {"v": 1, "pageId": "…", "turn": 0, "kind": "answer",
 ///      "blocks": [<AnswerBlock wire format>],
 ///      "sources": [{"title": "…", "url": "https://…", "siteName": "…"}],
 ///      "followUps": [], "isComplete": false,
@@ -18,6 +18,10 @@ public struct AIModeMessage: Sendable, Hashable {
     /// Identifies the document that sent this, so a message from a page the
     /// engine has already left can be told apart.
     public var pageID: String?
+    /// Which of the document's questions this is about: 0 for the one the
+    /// page loaded with, then one more for each follow-up asked in it — so a
+    /// read of the previous answer can't land on the next.
+    public var turn: Int
     public var blocks: [AnswerBlock]
     public var sources: [WebSource]
     public var followUps: [String]
@@ -32,6 +36,7 @@ public struct AIModeMessage: Sendable, Hashable {
     public init(
         kind: AIModePageKind,
         pageID: String? = nil,
+        turn: Int = 0,
         blocks: [AnswerBlock] = [],
         sources: [WebSource] = [],
         followUps: [String] = [],
@@ -42,6 +47,7 @@ public struct AIModeMessage: Sendable, Hashable {
     ) {
         self.kind = kind
         self.pageID = pageID
+        self.turn = turn
         self.blocks = blocks
         self.sources = sources
         self.followUps = followUps
@@ -62,7 +68,7 @@ public struct AIModeMessage: Sendable, Hashable {
 
 extension AIModeMessage: Decodable {
     private enum CodingKeys: String, CodingKey {
-        case kind, pageId, blocks, sources, followUps, isComplete, signedIn, account, accountLabel, error
+        case kind, pageId, turn, blocks, sources, followUps, isComplete, signedIn, account, accountLabel, error
     }
 
     private struct RawSource: Decodable {
@@ -75,6 +81,7 @@ extension AIModeMessage: Decodable {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         kind = try c.decodeIfPresent(AIModePageKind.self, forKey: .kind) ?? .loading
         pageID = try c.decodeIfPresent(String.self, forKey: .pageId)
+        turn = (try? c.decodeIfPresent(Int.self, forKey: .turn)) ?? 0
         blocks = (try c.decodeIfPresent([AnswerBlock].self, forKey: .blocks) ?? []).filter { block in
             if case .paragraph(let text) = block { return !text.isEmpty }
             return true

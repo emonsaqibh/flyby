@@ -204,7 +204,9 @@ final class SearchController: ObservableObject {
         historySelection = nil
     }
 
-    private func send(_ q: String, with provider: ProviderKind) {
+    /// Asks `q` of `provider`: a follow-up if a conversation is open, a new
+    /// one otherwise.
+    func send(_ q: String, with provider: ProviderKind) {
         let q = q.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !q.isEmpty else { return }
         if provider == .browser {
@@ -390,6 +392,8 @@ final class SearchController: ObservableObject {
         // back-to-back search doesn't bounce the panel closed and open again.
         answerTask?.cancel()
         answerTask = nil
+        // Stopping also ends the page's conversation: it won't have this turn
+        // in it, so the next AI Mode question can't simply carry on there.
         if activeProvider == .aiMode, provider != .aiMode { aiMode.stop() }
         isRestored = false
         submittedQuery = q
@@ -409,9 +413,16 @@ final class SearchController: ObservableObject {
         case .browser:
             break
         case .aiMode:
-            // AI Mode answers each question on its own: its context lives
-            // in Google's page, which Flyby doesn't drive.
-            aiMode.search(q)
+            // A first question is a new search. A follow-up is typed into
+            // Google's own conversation when its page still holds this chat;
+            // otherwise (a chat from Recent Chats, a page that failed or was
+            // left, a turn another provider answered) the search's query
+            // carries the conversation. The bubble and history keep `q`.
+            if earlierTurns.isEmpty {
+                aiMode.search(q)
+            } else {
+                aiMode.followUp(q, orSearch: AIModeFollowUp.query(q, after: earlierTurns))
+            }
         case .gemini:
             startGemini(q, context: ChatContext.messages(from: earlierTurns))
         case .appleIntelligence:
