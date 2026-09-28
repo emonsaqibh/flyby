@@ -23,14 +23,14 @@ struct AnswerBlocksView: View {
             // its identity (and doesn't re-animate), and only genuinely new
             // blocks get the insertion transition.
             ForEach(Array(blocks.enumerated()), id: \.offset) { index, block in
-                AnswerBlockView(block: block, accent: settings.accent.color)
+                AnswerBlockView(block: block, accent: Color.accentColor)
                     .equatable()
                     .padding(.top, index == 0 ? 0 : spacing(before: index))
                     .transition(arrival)
             }
 
             if isStreaming {
-                StreamingCaret(color: settings.accent.color)
+                StreamingCaret(color: Color.accentColor)
                     .padding(.top, 8)
                     .transition(.opacity)
             }
@@ -74,8 +74,8 @@ struct AnswerBlockView: View, Equatable {
 
         case .paragraph(let text):
             Text(InlineMarkdown.render(text, accent: accent))
-                .font(.system(size: 14))
-                .lineSpacing(4)
+                .font(.system(size: AnswerMetrics.bodySize))
+                .lineSpacing(AnswerMetrics.lineSpacing)
                 .fixedSize(horizontal: false, vertical: true)
 
         case .listItem(let item):
@@ -88,9 +88,9 @@ struct AnswerBlockView: View, Equatable {
             // The bar is an overlay rather than a sibling so it always spans
             // exactly the text's height, however many lines that wraps to.
             Text(InlineMarkdown.render(text, accent: accent))
-                .font(.system(size: 14))
+                .font(.system(size: AnswerMetrics.bodySize))
                 .italic()
-                .lineSpacing(4)
+                .lineSpacing(AnswerMetrics.lineSpacing)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
                 .padding(.leading, 14)
@@ -109,12 +109,13 @@ struct AnswerBlockView: View, Equatable {
         }
     }
 
+    /// Bold, and only a little larger than the text: on a card this size a
+    /// heading marks a section rather than announcing it.
     private static func headingFont(_ level: Int) -> Font {
         switch level {
-        case 1:  return .system(size: 20, weight: .bold)
-        case 2:  return .system(size: 17, weight: .semibold)
-        case 3:  return .system(size: 15, weight: .semibold)
-        default: return .system(size: 14, weight: .semibold)
+        case 1:  return .system(size: 21, weight: .bold)
+        case 2:  return .system(size: 18, weight: .bold)
+        default: return .system(size: AnswerMetrics.bodySize, weight: .bold)
         }
     }
 }
@@ -163,14 +164,16 @@ private struct ListItemView: View {
     var body: some View {
         HStack(alignment: .firstTextBaseline, spacing: 8) {
             Text(marker)
-                .font(item.ordered ? Font.system(size: 14).monospacedDigit() : Font.system(size: 14, weight: .bold))
+                .font(item.ordered
+                      ? Font.system(size: AnswerMetrics.bodySize).monospacedDigit()
+                      : Font.system(size: AnswerMetrics.bodySize, weight: .bold))
                 .foregroundStyle(.secondary)
-                .frame(width: item.ordered ? 26 : 12, alignment: .trailing)
+                .frame(width: item.ordered ? 28 : 14, alignment: .trailing)
                 .accessibilityHidden(!item.ordered)
 
             Text(InlineMarkdown.render(item.text, accent: accent))
-                .font(.system(size: 14))
-                .lineSpacing(4)
+                .font(.system(size: AnswerMetrics.bodySize))
+                .lineSpacing(AnswerMetrics.lineSpacing)
                 .fixedSize(horizontal: false, vertical: true)
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
@@ -230,7 +233,7 @@ private struct CodeBlockView: View {
 
             ScrollView(.horizontal) {
                 Text(code)
-                    .font(.system(size: 12.5, design: .monospaced))
+                    .font(.system(size: 13, design: .monospaced))
                     .lineSpacing(2)
                     .fixedSize(horizontal: true, vertical: true)
                     .padding(.horizontal, 12)
@@ -320,7 +323,7 @@ private struct TableBlockView: View {
     }
 
     private func cell(_ text: String, width: CGFloat?, isHeader: Bool) -> some View {
-        let font: Font = isHeader ? .system(size: 13, weight: .semibold) : .system(size: 13)
+        let font: Font = isHeader ? .system(size: 14, weight: .semibold) : .system(size: 14)
         return Text(InlineMarkdown.render(text, accent: accent))
             .font(font)
             .lineSpacing(2)
@@ -354,7 +357,7 @@ private struct StreamingCaret: View {
     var body: some View {
         RoundedRectangle(cornerRadius: 1.25, style: .continuous)
             .fill(color)
-            .frame(width: 2.5, height: 16)
+            .frame(width: 2.5, height: 18)
             .opacity(dimmed ? 0.15 : 1)
             .onAppear {
                 guard !reduceMotion else { return }

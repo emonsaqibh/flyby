@@ -2,20 +2,20 @@ import AppKit
 import Combine
 import FlybyCore
 
-/// Owns the state the pill and the panel above it render.
+/// Owns the state the bar and the answer card render.
 ///
 /// What's on screen is a conversation: the earlier turns, frozen, and one
 /// live turn — the one `submittedQuery`, `phase` and `answer` describe.
-/// Asking again from the pill while a conversation is open is a follow-up:
+/// Asking again from the input while a conversation is open is a follow-up:
 /// the live turn joins the earlier ones and a new one starts.
 ///
 /// Providers differ wildly underneath — a browser hop, a live Google page, an
-/// SSE stream — but they all reduce to the same thing here: a `phase` and an
-/// `AnswerSnapshot`. The views only ever read those two.
+/// SSE stream, a model on this Mac — but they all reduce to the same thing
+/// here: a `phase` and an `AnswerSnapshot`. The views only ever read those two.
 @MainActor
 final class SearchController: ObservableObject {
     enum Phase: Equatable {
-        /// Nothing submitted; only the pill shows.
+        /// Nothing submitted; only the bar shows.
         case idle
         /// Submitted, nothing to show yet.
         case working
@@ -28,7 +28,15 @@ final class SearchController: ObservableObject {
         case failed(String)
     }
 
-    @Published var query = ""
+    @Published var query = "" {
+        didSet {
+            // A new filter starts at the top of the command list, and brings
+            // back a list Esc put away.
+            guard query != oldValue else { return }
+            commandSelection = 0
+            if dismissedCommandInput != nil { dismissedCommandInput = nil }
+        }
+    }
 
     /// The conversation's finished turns, oldest first. The live turn isn't
     /// among them until the next question moves it here.
@@ -43,6 +51,10 @@ final class SearchController: ObservableObject {
     /// Identifies the live turn, so the conversation can scroll to each new
     /// question as it's asked.
     @Published private(set) var liveTurnID = UUID()
+    /// The identity the next question will have. The input's text carries it
+    /// while it's typed, so the question can be seen travelling from the
+    /// input into the bubble it becomes.
+    @Published private(set) var nextTurnID = UUID()
     /// The live turn was reopened from history rather than asked in this
     /// session, so there's no page behind it and nothing running.
     @Published private(set) var isRestored = false
@@ -54,8 +66,10 @@ final class SearchController: ObservableObject {
         didSet { aiMode.setPageRevealed(prefersWebPage) }
     }
 
-    /// The history list is showing in the panel.
+    /// The history list is showing in the card.
     @Published var showsHistory = false
+    /// The keyboard shortcuts are showing, over the bar or the card (⌘/).
+    @Published var showsShortcuts = false
     /// The row the arrow keys have reached in the history list.
     @Published var historySelection: UUID?
 
@@ -65,7 +79,8 @@ final class SearchController: ObservableObject {
     private var conversationID = UUID()
     private var conversationStarted = Date()
     private var liveTurnDate = Date()
-    private var geminiTask: Task<Void, Never>?
+    /// The streaming answer from Gemini or Apple Intelligence.
+    private var answerTask: Task<Void, Never>?
     private var cancellables = Set<AnyCancellable>()
 
     init(history: ConversationHistory? = nil) {
@@ -95,15 +110,37 @@ final class SearchController: ObservableObject {
         return prefersWebPage
     }
 
-    /// What the conversation is called: its first question.
-    var conversationTitle: String { earlierTurns.first?.query ?? submittedQuery }
+    /// Retry is offered once there's an outcome to redo: a finished answer or
+    /// a failure. Not mid-stream (that's Stop's moment) and not while Google
+    /// is waiting on the user.
+    var offersRetry: Bool {
+        guard !submittedQuery.isEmpty, activeProvider != nil else { return false }
+        switch phase {
+        case .complete, .failed: return true
+        default:                 return false
+        }
+    }
+
+    /// Switching between the answer and Google's page: only when there's a
+    /// page behind the answer, and not while Google is holding the page open
+    /// for the user anyway.
+    var offersPageToggle: Bool {
+        guard canShowWebPage else { return false }
+        if case .needsAttention = phase { return false }
+        return true
+    }
 
     // MARK: - Asking
 
-    /// Return in the pill: a follow-up if a conversation is open, a new one
+    /// Return in the input: a follow-up if a conversation is open, a new one
     /// otherwise. With the history list open and nothing typed, Return opens
     /// the highlighted conversation instead.
     func submit() {
+        // "/set" and Return: the highlighted command, not a search for it.
+        if !commands.isEmpty {
+            runSelectedCommand()
+            return
+        }
         let q = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !q.isEmpty else {
             if showsHistory, let id = historySelection { openConversation(id) }
@@ -124,17 +161,18 @@ final class SearchController: ObservableObject {
         openInBrowser(q.isEmpty ? submittedQuery : q)
     }
 
-    /// Asks the live turn's question again, with the same provider.
+    /// Asks the live turn's question again, with the same provider — the same
+    /// turn, answered afresh, so the question stays where it is.
     func retry() {
         guard !submittedQuery.isEmpty, let provider = activeProvider else { return }
-        run(submittedQuery, with: provider)
+        run(submittedQuery, with: provider, asTurn: liveTurnID)
     }
 
     /// Freezes the answer as it stands.
     func stop() {
         guard isBusy else { return }
-        geminiTask?.cancel()
-        geminiTask = nil
+        answerTask?.cancel()
+        answerTask = nil
         aiMode.stop()
         answer.isComplete = true
         phase = answer.isEmpty ? .failed("Stopped before an answer arrived.") : .complete
@@ -146,8 +184,8 @@ final class SearchController: ObservableObject {
         NSPasteboard.general.setString(answer.plainText, forType: .string)
     }
 
-    /// Puts the conversation away (it's in history) and goes back to an empty
-    /// pill.
+    /// Puts the conversation away (it's in history) and folds back to the
+    /// bar.
     func newChat() {
         saveConversation()
         clearConversation()
@@ -162,6 +200,7 @@ final class SearchController: ObservableObject {
         clearConversation()
         query = ""
         showsHistory = false
+        showsShortcuts = false
         historySelection = nil
     }
 
@@ -221,8 +260,8 @@ final class SearchController: ObservableObject {
             guard let self, let conversation = await self.history.load(id),
                   let last = conversation.turns.last else { return }
             self.saveConversation()
-            self.geminiTask?.cancel()
-            self.geminiTask = nil
+            self.answerTask?.cancel()
+            self.answerTask = nil
             // Before the engine resets: its "empty" snapshot must not land
             // on the restored answer.
             self.isRestored = true
@@ -244,6 +283,88 @@ final class SearchController: ObservableObject {
         }
     }
 
+    // MARK: - Slash commands
+
+    /// The highlighted row in the command list.
+    @Published var commandSelection = 0
+    /// The input as it was when Esc put the command list away; the list stays
+    /// away until the text changes.
+    @Published private var dismissedCommandInput: String?
+
+    /// What's typed after a leading "/" — while it's still one word. A space
+    /// makes it a question.
+    var commandInput: String? {
+        guard query.hasPrefix("/"), !query.contains(where: \.isWhitespace) else { return nil }
+        return String(query.dropFirst())
+    }
+
+    /// The commands the list shows: matching what's typed, and only those
+    /// that would do something now. Empty when there's no list — including
+    /// when nothing matches, so Return searches for the text instead.
+    var commands: [SlashCommand] {
+        guard let typed = commandInput, query != dismissedCommandInput else { return [] }
+        return SlashCommand.matching(typed, in: SlashCommand.all.filter(isAvailable))
+    }
+
+    var selectedCommandIndex: Int { min(commandSelection, max(commands.count - 1, 0)) }
+
+    func moveCommandSelection(by offset: Int) {
+        let count = commands.count
+        guard count > 0 else { return }
+        commandSelection = min(max(selectedCommandIndex + offset, 0), count - 1)
+    }
+
+    func selectCommand(_ command: SlashCommand) {
+        if let index = commands.firstIndex(of: command) { commandSelection = index }
+    }
+
+    /// Esc with the list open: away with the list, keeping the text.
+    func dismissCommands() {
+        dismissedCommandInput = query
+    }
+
+    func runSelectedCommand() {
+        let commands = self.commands
+        guard !commands.isEmpty else { return }
+        run(commands[selectedCommandIndex])
+    }
+
+    /// Clears the "/…" and does it.
+    func run(_ command: SlashCommand) {
+        query = ""
+        switch command.action {
+        case .settings:
+            NotificationCenter.default.post(name: .flybyShouldOpenSettings, object: nil)
+        case .history:
+            openHistory()
+        case .shortcuts:
+            showsShortcuts = true
+        case .newChat:
+            newChat()
+        case .retry:
+            retry()
+        case .copy:
+            copyAnswer()
+        case .provider(let provider):
+            AppSettings.shared.provider = provider
+        }
+    }
+
+    private func isAvailable(_ command: SlashCommand) -> Bool {
+        switch command.action {
+        case .newChat: return showsPanel
+        case .retry:   return offersRetry
+        case .copy:    return isResultVisible && !answer.isEmpty
+        default:       return true
+        }
+    }
+
+    /// ⌘⌫ in the history list.
+    func deleteSelectedConversation() {
+        guard showsHistory, let id = historySelection else { return }
+        deleteConversation(id)
+    }
+
     func deleteConversation(_ id: UUID) {
         history.delete(id)
         if historySelection == id { historySelection = history.summaries.first?.id }
@@ -254,7 +375,9 @@ final class SearchController: ObservableObject {
 
     // MARK: - Running a search
 
-    private func run(_ raw: String, with provider: ProviderKind) {
+    /// `turn` is the live turn being asked again; a new question takes the
+    /// identity its text carried in the input.
+    private func run(_ raw: String, with provider: ProviderKind, asTurn turn: UUID? = nil) {
         let q = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !q.isEmpty else { return }
 
@@ -265,15 +388,20 @@ final class SearchController: ObservableObject {
 
         // Clear the previous answer without passing through `.idle`, so a
         // back-to-back search doesn't bounce the panel closed and open again.
-        geminiTask?.cancel()
-        geminiTask = nil
+        answerTask?.cancel()
+        answerTask = nil
         if activeProvider == .aiMode, provider != .aiMode { aiMode.stop() }
         isRestored = false
         submittedQuery = q
         activeProvider = provider
         answer = .empty
         prefersWebPage = false
-        liveTurnID = UUID()
+        if let turn {
+            liveTurnID = turn
+        } else {
+            liveTurnID = nextTurnID
+            nextTurnID = UUID()
+        }
         liveTurnDate = Date()
         phase = .working
 
@@ -286,6 +414,8 @@ final class SearchController: ObservableObject {
             aiMode.search(q)
         case .gemini:
             startGemini(q, context: ChatContext.messages(from: earlierTurns))
+        case .appleIntelligence:
+            startAppleIntelligence(q, context: AppleIntelligenceProvider.context(from: earlierTurns))
         }
     }
 
@@ -295,8 +425,8 @@ final class SearchController: ObservableObject {
         NotificationCenter.default.post(name: .quickSearchShouldDismiss, object: nil)
     }
 
-    /// The pill takes the keyboard back — after a question is sent, a chat is
-    /// opened, or the history list closes.
+    /// The input takes the keyboard back — after a question is sent, a chat
+    /// is opened, or the history list closes.
     private func requestInputFocus() {
         NotificationCenter.default.post(name: .flybyShouldFocusInput, object: nil)
     }
@@ -349,8 +479,8 @@ final class SearchController: ObservableObject {
     }
 
     private func clearConversation() {
-        geminiTask?.cancel()
-        geminiTask = nil
+        answerTask?.cancel()
+        answerTask = nil
         aiMode.reset()
         earlierTurns = []
         submittedQuery = ""
@@ -373,7 +503,7 @@ final class SearchController: ObservableObject {
     // MARK: - Gemini
 
     private func startGemini(_ q: String, context: [ChatMessage]) {
-        geminiTask = Task { [weak self] in
+        answerTask = Task { [weak self] in
             var markdown = ""
             var sources: [WebSource] = []
             do {
@@ -394,6 +524,32 @@ final class SearchController: ObservableObject {
                 guard let self, !Task.isCancelled else { return }
                 self.answer.isComplete = true
                 self.phase = self.answer.isEmpty ? .failed("Gemini returned an empty answer.") : .complete
+                self.turnDidSettle()
+            } catch is CancellationError {
+                // Stopped or superseded; whoever cancelled owns the state now.
+            } catch {
+                guard let self, !Task.isCancelled else { return }
+                self.phase = .failed(error.localizedDescription)
+                self.turnDidSettle()
+            }
+        }
+    }
+
+    // MARK: - Apple Intelligence
+
+    /// Each element is the whole answer so far, not the next piece of it.
+    private func startAppleIntelligence(_ q: String, context: [ChatMessage]) {
+        let stream = AppleIntelligenceProvider.stream(query: q, context: context)
+        answerTask = Task { [weak self] in
+            do {
+                for try await markdown in stream {
+                    guard let self, !Task.isCancelled else { return }
+                    self.answer = AnswerSnapshot(blocks: MarkdownParser.parse(markdown), sources: [])
+                    self.phase = .streaming
+                }
+                guard let self, !Task.isCancelled else { return }
+                self.answer.isComplete = true
+                self.phase = self.answer.isEmpty ? .failed("Apple Intelligence returned an empty answer.") : .complete
                 self.turnDidSettle()
             } catch is CancellationError {
                 // Stopped or superseded; whoever cancelled owns the state now.
@@ -439,6 +595,6 @@ final class SearchController: ObservableObject {
 
 extension Notification.Name {
     static let quickSearchShouldDismiss = Notification.Name("quickSearchShouldDismiss")
-    /// Puts the keyboard back in the pill.
+    /// Puts the keyboard back in the input.
     static let flybyShouldFocusInput = Notification.Name("flybyShouldFocusInput")
 }

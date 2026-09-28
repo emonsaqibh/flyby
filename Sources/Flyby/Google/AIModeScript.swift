@@ -790,7 +790,8 @@ enum AIModeScript {
     }
   }
 
-  // AI Mode echoes the query as a bubble above the answer; the pill shows it.
+  // AI Mode echoes the query as a bubble above the answer; Flyby's own bubble
+  // already shows it.
   function hideQueryEcho() {
     var query = new URLSearchParams(location.search).get('q');
     if (!query) return;

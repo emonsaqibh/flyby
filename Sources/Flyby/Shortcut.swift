@@ -36,9 +36,9 @@ enum Shortcut: Equatable {
     /// they feel different in the hand.
     var explanation: String {
         switch self {
-        case .modifierChord:        return "Hold these together to open the pill."
-        case .keyCombo:             return "Press this to open the pill."
-        case .doubleTap(let key):   return "Tap \(key.label) twice, quickly, to open the pill."
+        case .modifierChord:        return "Hold these together to open Flyby."
+        case .keyCombo:             return "Press this to open Flyby."
+        case .doubleTap(let key):   return "Tap \(key.label) twice, quickly, to open Flyby."
         }
     }
 

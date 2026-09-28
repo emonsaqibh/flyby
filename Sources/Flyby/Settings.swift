@@ -37,6 +37,7 @@ enum ProviderKind: String, CaseIterable, Identifiable {
     /// Stored as "webview" — the name from before AI Mode got a native view.
     case aiMode   = "webview"
     case gemini   = "gemini"
+    case appleIntelligence = "appleIntelligence"
 
     var id: String { rawValue }
 
@@ -45,6 +46,7 @@ enum ProviderKind: String, CaseIterable, Identifiable {
         case .browser: return "Browser"
         case .aiMode:  return "Google AI Mode"
         case .gemini:  return "Gemini"
+        case .appleIntelligence: return "Apple Intelligence"
         }
     }
 
@@ -53,17 +55,18 @@ enum ProviderKind: String, CaseIterable, Identifiable {
         case .browser: return "Opens the search in your default browser"
         case .aiMode:  return "Answers from Google AI Mode, in your own Google session"
         case .gemini:  return "Streams an answer inline (needs a free API key)"
+        case .appleIntelligence: return "Answers on this Mac — private and offline, but no live web"
         }
     }
 
-    /// Says *where the answer lands*, not "search" — the pill already has a
-    /// magnifying glass on the leading edge and a second one there read as
-    /// decoration rather than a control.
+    /// Says *where the answer lands*, not "search": it's all there is on the
+    /// provider button, so it has to name the provider at a glance.
     var icon: String {
         switch self {
         case .browser: return "safari"
         case .aiMode:  return "sparkle.magnifyingglass"
         case .gemini:  return "text.bubble"
+        case .appleIntelligence: return "apple.intelligence"
         }
     }
 }
@@ -154,12 +157,6 @@ final class AppSettings: ObservableObject {
     @Published var readerMode: Bool {
         didSet { defaults.set(readerMode, forKey: "readerMode") }
     }
-    @Published var appearance: AppearanceMode {
-        didSet { defaults.set(appearance.rawValue, forKey: "appearance") }
-    }
-    @Published var accent: AccentTheme {
-        didSet { defaults.set(accent.rawValue, forKey: "accent") }
-    }
 
     /// Mirrors `SMAppService`, which is the real source of truth — the system
     /// can turn this off behind our back from System Settings › Login Items.
@@ -209,10 +206,11 @@ final class AppSettings: ObservableObject {
         engine = SearchEngine(rawValue: defaults.string(forKey: "engine") ?? "") ?? .google
         geminiModel = AppSettings.loadGeminiModel(from: defaults)
         readerMode = defaults.object(forKey: "readerMode") as? Bool ?? true
-        appearance = AppearanceMode(rawValue: defaults.string(forKey: "appearance") ?? "") ?? .system
-        accent = AccentTheme(rawValue: defaults.string(forKey: "accent") ?? "") ?? .system
-        // Glass stopped being optional in 0.4; forget the old switch.
+        // Glass stopped being optional in 0.4, the overlay became always
+        // dark, and the tint became the system accent; forget the old switches.
         defaults.removeObject(forKey: "liquidGlass")
+        defaults.removeObject(forKey: "appearance")
+        defaults.removeObject(forKey: "accent")
         launchAtLogin = LoginItem.isEnabled
         geminiKey = Keychain.get(AppSettings.geminiKeyAccount) ?? ""
     }
@@ -239,8 +237,6 @@ final class AppSettings: ObservableObject {
         engine = .google
         geminiModel = Self.defaultGeminiModel
         readerMode = true
-        appearance = .system
-        accent = .system
         launchAtLogin = false
         loginItemError = nil
         geminiKey = ""

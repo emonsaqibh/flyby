@@ -1,76 +1,53 @@
 import SwiftUI
 import AppKit
+import Combine
 import FlybyCore
 
 /// The settings window: a source list on the left, one pane on the right, in
 /// the shape of System Settings — which is where people already look for
-/// "how do I change this".
+/// "how do I change this". Always dark, like the rest of Flyby.
 ///
-/// Built from a plain `List` rather than `NavigationSplitView`: this lives in
-/// an `NSWindow` the app delegate creates, and a split view there brings
-/// toolbar and column-collapsing behaviour that only makes sense in a
-/// SwiftUI-managed window.
+/// A real `NavigationSplitView`, so the sidebar is the system's own. Each
+/// pane is a grouped `Form` that opens with a hero — its badge, its name and
+/// what it's for — the way System Settings' panes do; the panes themselves
+/// live in `SettingsUI/`. The sidebar can't be collapsed, since there's no
+/// pane that wants the room.
 struct SettingsView: View {
-    @ObservedObject private var settings = AppSettings.shared
     @ObservedObject private var navigation = SettingsNavigation.shared
-    @ObservedObject private var google = GoogleSession.shared
-    @ObservedObject private var history = ConversationHistory.shared
     /// Pauses the live hotkey while recording, so the old shortcut doesn't fire
     /// as the user presses their new one.
     let onRecordingChanged: (Bool) -> Void
 
-    @State private var confirmingReset = false
-    @State private var confirmingClearHistory = false
-
-    static let size = CGSize(width: 720, height: 560)
+    static let size = CGSize(width: 760, height: 640)
+    /// Wide enough for "Google Account" beside its badge, with room to spare.
+    static let sidebarWidth: CGFloat = 220
 
     var body: some View {
-        HStack(spacing: 0) {
-            sidebar
-            Divider()
-            detail
+        NavigationSplitView {
+            // A frame rather than `navigationSplitViewColumnWidth`, which a
+            // split view hosted in an AppKit window ignores.
+            SettingsSidebar(selection: selection)
+                .frame(width: Self.sidebarWidth)
+                .toolbar(removing: .sidebarToggle)
+        } detail: {
+            pane
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .defaultScrollAnchor(Self.debugScrollAnchor)
         }
-        .frame(width: Self.size.width, height: Self.size.height)
-        .themed()
+        // Fixed width, free height: tall panes (Google Account) get the room
+        // on a big screen, and nothing is cut off on a small one.
+        .frame(width: Self.size.width)
+        .frame(minHeight: 480, idealHeight: Self.size.height, maxHeight: .infinity)
         .onReceive(NotificationCenter.default.publisher(for: .flybyShouldShowGoogleSettings)) { _ in
             navigation.section = .google
         }
-        .confirmationDialog(
-            "Reset Flyby to a fresh install?",
-            isPresented: $confirmingReset,
-            titleVisibility: .visible
-        ) {
-            Button("Reset All Data", role: .destructive) { resetAll() }
-            Button("Cancel", role: .cancel) { }
-        } message: {
-            Text("Your shortcut, appearance, provider settings, chat history, Gemini API key and Google connection are all removed, and onboarding starts over. This can't be undone.")
-        }
-        .confirmationDialog(
-            "Clear your chat history?",
-            isPresented: $confirmingClearHistory,
-            titleVisibility: .visible
-        ) {
-            Button("Clear History", role: .destructive) { history.clear() }
-            Button("Cancel", role: .cancel) { }
-        } message: {
-            Text("Every saved chat is deleted from this Mac. This can't be undone.")
-        }
     }
 
-    // MARK: - Chrome
-
-    private var sidebar: some View {
-        List(selection: selection) {
-            ForEach(SettingsSection.allCases) { section in
-                Label(section.title, systemImage: section.icon)
-                    .padding(.vertical, 2)
-            }
-        }
-        .listStyle(.sidebar)
-        .scrollContentBackground(.hidden)
-        .background(VisualEffectBackground(material: .sidebar))
-        .frame(width: 200)
+    /// Dev builds only: `-FlybyDebugScrollToBottom 1` opens each pane
+    /// scrolled to its end, to check how content passes under the title
+    /// without scrolling by hand.
+    private static var debugScrollAnchor: UnitPoint? {
+        BuildFlavor.isDev && UserDefaults.standard.bool(forKey: "FlybyDebugScrollToBottom") ? .bottom : nil
     }
 
     /// Clicking empty space in a source list deselects; there's always a pane
@@ -82,308 +59,93 @@ struct SettingsView: View {
         )
     }
 
-    private var detail: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            Text(navigation.section.title)
-                .font(.system(size: 20, weight: .bold))
-                .padding(.horizontal, 24)
-                .padding(.top, 18)
-                .padding(.bottom, 2)
-                .accessibilityAddTraits(.isHeader)
-
-            pane
-        }
-    }
-
     @ViewBuilder
     private var pane: some View {
         switch navigation.section {
-        case .general:    general
-        case .appearance: appearance
-        case .search:     search
-        case .google:     googleAccount
-        case .advanced:   advanced
+        case .general:    GeneralPane()
+        case .shortcut:   ShortcutPane(onRecordingChanged: onRecordingChanged)
+        case .answers:    AnswersPane()
+        case .history:    HistoryPane()
+        case .google:     GoogleAccountPane()
+        case .advanced:   AdvancedPane()
         }
-    }
-
-    // MARK: - General
-
-    private var general: some View {
-        Form {
-            Section {
-                about
-            }
-
-            Section("Shortcut") {
-                LabeledContent("Shortcut") {
-                    ShortcutRecorder(
-                        shortcut: $settings.shortcut,
-                        onRecordingChanged: onRecordingChanged
-                    )
-                }
-                Text(settings.shortcut.explanation)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                Text("Click, then press a key with modifiers for a combo, hold two or more modifiers and release them for a chord, or tap a single modifier twice for a double-tap like double Right ⌥. Key combos need no permissions; chords and double-taps need Accessibility.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-
-            Section("System") {
-                // The dev build runs from build/ on purpose.
-                if !BuildFlavor.isDev && !Installer.isInstalled {
-                    // Login items and the Accessibility grant both key off the
-                    // app's path, so this is the fix for half the ways Flyby
-                    // can appear broken — worth a row of its own, not a footnote.
-                    LabeledContent {
-                        Button("Move to Applications") { Installer.performInstall() }
-                    } label: {
-                        Label("Not installed in Applications", systemImage: "exclamationmark.triangle")
-                            .foregroundStyle(.orange)
-                    }
-                    Text("Flyby is running from \(Installer.bundleURL.deletingLastPathComponent().path). Permissions and open-at-login follow the app's location, so they won't stick until it's in Applications.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-
-                Toggle("Open at login", isOn: $settings.launchAtLogin)
-                if let error = settings.loginItemError {
-                    Label(error, systemImage: "exclamationmark.triangle")
-                        .font(.caption)
-                        .foregroundStyle(.orange)
-                } else if let status = LoginItem.statusDescription {
-                    Label(status, systemImage: "info.circle")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                } else {
-                    Text("Managed by macOS — you can also turn this off in System Settings › General › Login Items. Registration is tied to where the app lives, so re-toggle after moving it.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-            }
-
-            UpdateSettingsSection()
-        }
-        .formStyle(.grouped)
-    }
-
-    /// The app's own icon and version, so Settings reads as Flyby's rather than
-    /// a generic preferences window — this is the only place a menu-bar app
-    /// gets to show its face.
-    private var about: some View {
-        HStack(spacing: 14) {
-            Image(nsImage: NSApp.applicationIconImage)
-                .resizable()
-                .frame(width: 64, height: 64)
-                .shadow(color: .black.opacity(0.2), radius: 7, y: 3)
-                .accessibilityHidden(true)
-
-            VStack(alignment: .leading, spacing: 3) {
-                HStack(spacing: 7) {
-                    Text(BuildFlavor.appName)
-                        .font(.system(size: 20, weight: .bold, design: .rounded))
-                    if BuildFlavor.isDev {
-                        DevBadge()
-                    }
-                }
-                Text(Self.versionString)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .textSelection(.enabled)
-                Text("Search from anywhere on your Mac with one gesture.")
-                    .font(.caption)
-                    .foregroundStyle(.tertiary)
-            }
-            .accessibilityElement(children: .combine)
-
-            Spacer(minLength: 0)
-        }
-        .padding(.vertical, 4)
-    }
-
-    private static var versionString: String {
-        var version = "Version \(BuildFlavor.versionLabel)"
-        if let commit = BuildFlavor.commit, !commit.isEmpty {
-            version += " (\(commit))"
-        }
-        return version
-    }
-
-    // MARK: - Appearance
-
-    private var appearance: some View {
-        Form {
-            Section("Theme") {
-                Picker("Appearance", selection: $settings.appearance) {
-                    ForEach(AppearanceMode.allCases) { Text($0.label).tag($0) }
-                }
-                .pickerStyle(.segmented)
-                Text("Applies to the pill, the result panel and this window. System follows your macOS setting live.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-
-            Section("Accent") {
-                LabeledContent("Color") {
-                    AccentSwatches(selection: $settings.accent, diameter: 18)
-                }
-                Text("Tints the ↩ badge, links and source chips. System uses the accent color from System Settings.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-        }
-        .formStyle(.grouped)
-    }
-
-    // MARK: - Search
-
-    private var search: some View {
-        Form {
-            Section("Provider") {
-                Picker("Answer with", selection: $settings.provider) {
-                    ForEach(ProviderKind.allCases) {
-                        Label($0.label, systemImage: $0.icon).tag($0)
-                    }
-                }
-                Text(settings.provider.detail)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-
-                // AI Mode without an account is the path Google quizzes most;
-                // say so where the choice is made.
-                if settings.provider == .aiMode, !google.isConnected {
-                    LabeledContent {
-                        Button("Connect…") { navigation.section = .google }
-                    } label: {
-                        Label("Connect your Google account for fewer “are you human?” checks.", systemImage: "person.crop.circle.badge.plus")
-                            .font(.callout)
-                    }
-                }
-            }
-
-            Section("Browser") {
-                Picker("Search engine", selection: $settings.engine) {
-                    ForEach(SearchEngine.allCases) { Text($0.label).tag($0) }
-                }
-                Text("Used when opening in your browser, including ⌘Return from any provider.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-
-            Section("Google AI Mode") {
-                Toggle("Reader mode", isOn: $settings.readerMode)
-                Text("When Flyby shows Google's page itself, hides Google's nav, sign-in and composer so only the answer shows. Turn off if it ever hides too much.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-
-            Section("Chat History") {
-                LabeledContent(history.summaries.isEmpty
-                               ? "No saved chats"
-                               : "\(history.summaries.count) saved \(history.summaries.count == 1 ? "chat" : "chats")") {
-                    Button("Clear History…", role: .destructive) { confirmingClearHistory = true }
-                        .disabled(history.summaries.isEmpty)
-                }
-                Text("Chats are kept on this Mac only, never uploaded. The newest \(HistoryStore.defaultLimit) are kept; older ones are removed automatically. Press ↑ in an empty pill or ⌘Y to see them.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-
-            Section("Gemini") {
-                SecureField("API key", text: $settings.geminiKey)
-                TextField("Model", text: $settings.geminiModel, prompt: Text(AppSettings.defaultGeminiModel))
-                Link("Get a free key from Google AI Studio",
-                     destination: URL(string: "https://aistudio.google.com/apikey")!)
-                    .font(.caption)
-                Text("Stored in your Keychain, never written to disk in plain text. The free tier covers everyday use.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-        }
-        .formStyle(.grouped)
-    }
-
-    // MARK: - Google Account
-
-    private var googleAccount: some View {
-        Form {
-            GoogleConnectView(layout: .form)
-        }
-        .formStyle(.grouped)
-    }
-
-    // MARK: - Advanced
-
-    private var advanced: some View {
-        Form {
-            Section("Walkthrough") {
-                LabeledContent("Onboarding") {
-                    Button("Show Onboarding Again") { showOnboarding() }
-                }
-                Text("Runs the first-launch walkthrough again. Nothing is erased.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-
-            Section("Reset") {
-                LabeledContent("Everything") {
-                    Button("Reset All Data…", role: .destructive) { confirmingReset = true }
-                }
-                Text("Clears every preference and your chat history, disconnects your Google account, forgets the Gemini key in your Keychain and turns off open-at-login — the state a fresh install would have. Reinstalling doesn't do this on its own, because settings live in your user account rather than in the app.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-        }
-        .formStyle(.grouped)
-    }
-
-    private func resetAll() {
-        settings.resetAll()
-        history.clear()
-        Task { await GoogleSession.shared.disconnect() }
-        navigation.section = .general
-        showOnboarding()
-    }
-
-    /// The walkthrough lives in a window the app delegate owns, so Settings can
-    /// only ask for it.
-    private func showOnboarding() {
-        settings.hasCompletedOnboarding = false
-        NotificationCenter.default.post(name: .flybyShouldShowOnboarding, object: nil)
     }
 }
 
 // MARK: - Sections
 
+/// The panes, in sidebar order. `general` and `google` are part of the app's
+/// vocabulary — `SettingsNavigation.showGoogleAccount()` and the
+/// `-FlybyDebugOpen settings.<rawValue>` hook name them — so keep those.
 enum SettingsSection: String, CaseIterable, Identifiable {
-    case general, appearance, search, google, advanced
+    case general, shortcut, answers, history, google, advanced
 
     var id: Self { self }
+
+    /// Grouped the way System Settings clusters its sidebar: the app itself,
+    /// then what answers you and what it keeps, then the escape hatches.
+    static let sidebarGroups: [[SettingsSection]] = [
+        [.general, .shortcut],
+        [.answers, .history, .google],
+        [.advanced],
+    ]
 
     var title: String {
         switch self {
         case .general:    return "General"
-        case .appearance: return "Appearance"
-        case .search:     return "Search"
+        case .shortcut:   return "Shortcut"
+        case .answers:    return "Answers"
+        case .history:    return "History"
         case .google:     return "Google Account"
         case .advanced:   return "Advanced"
         }
     }
 
-    var icon: String {
+    /// One line under the pane's name in its hero — what the pane is for,
+    /// not a list of what's in it.
+    var summary: String {
         switch self {
-        case .general:    return "gearshape"
-        case .appearance: return "paintbrush"
-        case .search:     return "magnifyingglass"
-        case .google:     return "person.crop.circle"
-        case .advanced:   return "slider.horizontal.3"
+        case .general:    return "How Flyby starts up, stays current, and which version you’re running."
+        case .shortcut:   return "The gesture that brings up Flyby from anywhere on your Mac."
+        case .answers:    return "Choose where answers come from, and set up each source."
+        case .history:    return "Your recent chats, kept only on this Mac."
+        case .google:     return "Sign AI Mode in as you, so Google rarely asks if you’re human."
+        case .advanced:   return "Run the walkthrough again, or start over from scratch."
         }
+    }
+
+    /// Each pane gets its own hue, so the sidebar can be read by colour at a
+    /// glance — though never *only* by colour: every badge has its own symbol.
+    var tint: Color {
+        switch self {
+        case .general:    return .gray
+        case .shortcut:   return .indigo
+        case .answers:    return .blue
+        case .history:    return .orange
+        case .google:     return .green
+        case .advanced:   return .red
+        }
+    }
+
+    var symbol: String {
+        switch self {
+        case .general:    return "gearshape.fill"
+        case .shortcut:   return "command"
+        case .answers:    return "sparkles"
+        case .history:    return "clock.arrow.circlepath"
+        case .google:     return "person.crop.circle.fill"
+        case .advanced:   return "wrench.and.screwdriver.fill"
+        }
+    }
+
+    func badge(size: CGFloat) -> IconBadge {
+        IconBadge(symbol, color: tint, size: size)
     }
 }
 
 /// Which pane Settings shows. Shared rather than view state, so a request can
-/// land before the window exists — "Connect Google Account…" in the pill
-/// sets it, then the app delegate opens the window already on that pane.
+/// land before the window exists — "Connect Google Account…" in the provider
+/// menu sets it, then the app delegate opens the window already on that pane.
 @MainActor
 final class SettingsNavigation: ObservableObject {
     static let shared = SettingsNavigation()
@@ -404,46 +166,50 @@ extension Notification.Name {
     static let flybyShouldShowGoogleSettings = Notification.Name("flybyShouldShowGoogleSettings")
 }
 
-// MARK: - Accent swatches
+// MARK: - Window
 
-/// Eight swatches, each in the colour it will actually draw — the derived
-/// shade for the current appearance, not a nominal one. Shared with
-/// onboarding.
-struct AccentSwatches: View {
-    @Binding var selection: AccentTheme
-    var diameter: CGFloat = 18
+extension SettingsView {
+    /// The Settings window, styled and sized for it. The app delegate owns its
+    /// lifetime: it positions it, keeps it, and hears it close.
+    ///
+    /// Shaped like System Settings: the sidebar runs the full height of the
+    /// window, under the traffic lights, and the selected pane's name sits in
+    /// a unified toolbar over the detail column.
+    ///
+    /// Dark whatever the system is set to: Flyby has no light mode, and its
+    /// Settings should look like the overlay it configures.
+    static func makeWindow(onRecordingChanged: @escaping (Bool) -> Void) -> NSWindow {
+        let host = NSHostingController(rootView: SettingsView(onRecordingChanged: onRecordingChanged))
+        // Toolbars only. A bridged navigation title never reaches a window
+        // SwiftUI didn't create, so the window follows the pane itself.
+        host.sceneBridgingOptions = [.toolbars]
+        // The window takes its width and its minimum height from SwiftUI but
+        // not its ideal height, which would snap back every drag.
+        host.sizingOptions = [.minSize, .maxSize]
 
-    var body: some View {
-        HStack(spacing: diameter * 0.45) {
-            ForEach(AccentTheme.allCases) { theme in
-                let isSelected = selection == theme
-                Button {
-                    selection = theme
-                } label: {
-                    Circle()
-                        .fill(theme.swatch)
-                        .frame(width: diameter, height: diameter)
-                        .overlay(
-                            // "System" gets a rim, so it doesn't read as
-                            // just another colour.
-                            Circle()
-                                .strokeBorder(.primary.opacity(theme == .system ? 0.35 : 0), lineWidth: 1)
-                        )
-                        .overlay(
-                            Circle()
-                                .strokeBorder(.primary, lineWidth: 2)
-                                .padding(-3)
-                                .opacity(isSelected ? 1 : 0)
-                        )
-                        .contentShape(Circle())
-                }
-                .buttonStyle(.plain)
-                .help(theme.label)
-                .accessibilityLabel(theme.label)
-                .accessibilityAddTraits(isSelected ? .isSelected : [])
-            }
-        }
-        .accessibilityElement(children: .contain)
-        .accessibilityLabel("Accent color")
+        let window = SettingsWindow(contentViewController: host)
+        window.appearance = NSAppearance(named: .darkAqua)
+        window.styleMask = [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView]
+        // Without a toolbar the title bar is a bare strip; an (empty) unified
+        // toolbar gives it System Settings' height and puts the title over
+        // the detail column rather than across the window.
+        window.toolbar = NSToolbar(identifier: "FlybySettings")
+        window.toolbarStyle = .unified
+        window.collectionBehavior.insert(.fullScreenNone)
+        window.setContentSize(size)
+        window.followTitle(of: SettingsNavigation.shared)
+        return window
+    }
+}
+
+/// Titled after whichever pane is showing, the way System Settings is — and
+/// what Mission Control and the Window menu call it.
+private final class SettingsWindow: NSWindow {
+    private var titleSubscription: AnyCancellable?
+
+    func followTitle(of navigation: SettingsNavigation) {
+        titleSubscription = navigation.$section
+            .removeDuplicates()
+            .sink { [weak self] section in self?.title = section.title }
     }
 }

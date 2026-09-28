@@ -54,7 +54,7 @@ struct AttentionBanner: View {
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 10)
-        .surface(RoundedRectangle(cornerRadius: PanelMetrics.innerRadius, style: .continuous))
+        .surface(RoundedRectangle(cornerRadius: CardMetrics.innerRadius, style: .continuous))
         .accessibilityElement(children: .contain)
     }
 

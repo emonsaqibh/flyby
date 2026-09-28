@@ -3,6 +3,7 @@ import SwiftUI
 import Combine
 import os
 import ServiceManagement
+import WebKit
 
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
@@ -35,7 +36,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// broken shortcut twice in a row (recorder commit, then the settings
     /// change) doesn't alert twice.
     private var lastReportedProblem: String?
-    /// Whoever was frontmost when the pill opened, to hand focus back to.
+    /// Whoever was frontmost when Flyby opened, to hand focus back to.
     private var previousApp: NSRunningApplication?
     private var isRunning = false
     private var cancellables = Set<AnyCancellable>()
@@ -75,13 +76,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         observeOnboardingRequests()
         observeInstaller()
         observeOtherInstances()
-        observeHistoryRequests()
+        observeFocusRequests()
+        observeSettingsRequests()
         installKeyboardShortcuts()
-        observeAppearance()
         startHotKeys()
         if !AppSettings.shared.hasCompletedOnboarding {
             showOnboarding()
         }
+        openDebugWindowIfAsked()
         // Never prompts, so it's fine alongside onboarding. A session the
         // browser has since rotated is what sends AI Mode's first search
         // into a CAPTCHA.
@@ -92,33 +94,36 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         Self.log.info("launch-at-login status=\(String(describing: SMAppService.mainApp.status), privacy: .public)")
     }
 
-    /// Appearance is set once on `NSApp`, which every window — pill, result
-    /// panel, settings — inherits.
-    private func observeAppearance() {
-        AppSettings.shared.$appearance
-            .removeDuplicates()
-            .receive(on: RunLoop.main)
-            .sink { NSApp.appearance = $0.nsAppearance }
-            .store(in: &cancellables)
-    }
-
     private var ownsKeyWindow: Bool {
         panel.isKeyWindow
     }
 
-    /// The pill's text field has the keyboard — not the web page, and not a
-    /// selection in an answer.
-    private var isTypingInPill: Bool {
-        (panel.firstResponder as? NSTextView)?.isFieldEditor == true
+    /// The input has the keyboard — not the web page, and not a selection in
+    /// an answer.
+    private var isTypingInInput: Bool { panel.inputEditor != nil }
+
+    /// The keyboard is in Google's page — a CAPTCHA's field, a consent
+    /// button — which gets its own keys, Tab included.
+    private var isInWebPage: Bool {
+        var view = panel.firstResponder as? NSView
+        while let current = view {
+            if current is WKWebView { return true }
+            view = current.superview
+        }
+        return false
     }
 
-    /// The pill's keys. ⌘Return escapes to the real browser whatever the
-    /// provider is, and Esc closes — both need intercepting, since the text
-    /// field swallows Return and the web view swallows Esc. The rest act on
-    /// the answer: ⌘. stops it, ⌘R asks again, ⌘⇧C copies it. Plain ⌘C is
-    /// left alone so it keeps copying the selection. ⌘N starts a new chat and
-    /// ⌘Y shows recent ones; so does ↑ in an empty pill, and ↑↓ then move
-    /// through them.
+    /// Flyby's keys, all of them handled here: typing stays in the input, so
+    /// shortcuts attached to buttons would never fire. `KeyboardMap` lists
+    /// them for the shortcuts overlay (⌘/); keep the two in step.
+    ///
+    /// The keyboard is in one of three places. **Typing** in the input, where
+    /// text editing keeps every key it uses. **Reading** the card, after Esc
+    /// or a click in an answer: the arrows, Space and the page keys scroll,
+    /// Tab goes back to the input, and anything typed lands in it. Or **in
+    /// Google's page**, which keeps its keys. Esc steps back one level at a
+    /// time — the shortcuts, recent chats, the input, then Flyby itself; ⌘W
+    /// closes at once.
     private func installKeyboardShortcuts() {
         keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
             // Local monitors run on the main thread.
@@ -130,56 +135,223 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func handleKeyDown(_ event: NSEvent) -> Bool {
         guard ownsKeyWindow else { return false }
         let modifiers = event.modifierFlags.intersection([.command, .option, .control, .shift])
-
-        // Return (36) or keypad Enter (76).
-        if event.keyCode == 36 || event.keyCode == 76, modifiers.contains(.command) {
-            controller.submitToBrowser()
-            return true
+        if modifiers.contains(.command) {
+            return handleCommand(event, modifiers: modifiers)
         }
-        if event.keyCode == 53 {  // Esc
-            // One step back at a time: out of the history list, then away.
-            if controller.showsHistory {
+
+        // An input method mid-composition owns the keyboard: its arrows pick
+        // candidates, Return commits, Esc cancels. And the text it's
+        // composing isn't in the query yet, so "empty" would be a lie.
+        if panel.inputEditor?.hasMarkedText() == true { return false }
+
+        let typing = isTypingInInput
+        let inPage = isInWebPage
+        let emptyInput = controller.query.isEmpty
+        let reading = stage.isPresented && controller.showsPanel && !typing && !inPage
+        let key = event.keyCode
+
+        // The slash-command list, while it's open, has the keys that move
+        // through it and run it; Return is the input's own, and runs it too.
+        if typing, !controller.commands.isEmpty, modifiers.isEmpty {
+            switch key {
+            case Key.escape:
+                controller.dismissCommands()
+                return true
+            case Key.upArrow, Key.downArrow:
+                controller.moveCommandSelection(by: key == Key.upArrow ? -1 : 1)
+                return true
+            case Key.tab:
+                controller.runSelectedCommand()
+                return true
+            default:
+                break
+            }
+        }
+
+        switch key {
+        case Key.escape:
+            if controller.showsShortcuts {
+                controller.showsShortcuts = false
+            } else if controller.showsHistory {
                 controller.closeHistory()
+            } else if typing, controller.showsPanel {
+                panel.leaveInput()
             } else {
-                hidePill()
+                hideFlyby()
             }
             return true
-        }
-        // ↑ (126) and ↓ (125) in the pill, when there's nothing typed to
-        // move the caret through.
-        if modifiers.isEmpty, event.keyCode == 126 || event.keyCode == 125,
-           isTypingInPill, controller.query.isEmpty {
-            if controller.showsHistory {
-                controller.moveHistorySelection(by: event.keyCode == 126 ? -1 : 1)
+
+        case Key.returnKey, Key.enter:
+            // Typing, Return is the field's own (it asks). Reading the list,
+            // it opens the highlighted chat.
+            guard modifiers.isEmpty, !typing, !inPage, controller.showsHistory,
+                  let id = controller.historySelection else { return false }
+            controller.openConversation(id)
+            return true
+
+        case Key.tab:
+            guard !inPage, modifiers.subtracting(.shift).isEmpty else { return false }
+            // From anywhere in the card, into the input; in the input, Tab
+            // goes nowhere — the input is where it leads.
+            panel.focusInput()
+            return true
+
+        case Key.upArrow, Key.downArrow:
+            guard modifiers.isEmpty, !inPage else { return false }
+            let up = key == Key.upArrow
+            if controller.showsHistory, !typing || emptyInput {
+                controller.moveHistorySelection(by: up ? -1 : 1)
                 return true
             }
-            if event.keyCode == 126 {
+            if typing, emptyInput, up {
                 controller.openHistory()
                 return true
             }
+            if reading, canScrollAnswer {
+                scrollAnswer(up ? .lineUp : .lineDown)
+                return true
+            }
             return false
-        }
-        if modifiers == .command, Self.matches(event, character: "n", keyCode: 45), controller.showsPanel {
-            controller.newChat()
+
+        case Key.space:
+            guard reading, canScrollAnswer, modifiers.subtracting(.shift).isEmpty else { break }
+            scrollAnswer(modifiers.contains(.shift) ? .pageUp : .pageDown)
             return true
-        }
-        if modifiers == .command, Self.matches(event, character: "y", keyCode: 16) {
-            controller.toggleHistory()
+
+        case Key.pageUp, Key.pageDown:
+            // The input is a few lines at most; paging only ever means the
+            // answer, typing or not.
+            guard canScrollAnswer, !inPage else { return false }
+            scrollAnswer(key == Key.pageUp ? .pageUp : .pageDown)
             return true
-        }
-        if modifiers == .command, Self.matches(event, character: ".", keyCode: 47), controller.isBusy {
-            controller.stop()
+
+        case Key.home, Key.end:
+            guard canScrollAnswer, !inPage, !typing || emptyInput else { return false }
+            scrollAnswer(key == Key.home ? .top : .bottom)
             return true
+
+        default:
+            break
         }
-        if modifiers == .command, Self.matches(event, character: "r", keyCode: 15), controller.isResultVisible {
-            controller.retry()
-            return true
+
+        // Reading, anything typed is the start of a follow-up: into the input
+        // it goes, and the keystroke with it.
+        if reading, modifiers.subtracting([.shift, .option]).isEmpty, Self.isPrintable(event) {
+            panel.focusInput()
+        }
+        return false
+    }
+
+    private func handleCommand(_ event: NSEvent, modifiers: NSEvent.ModifierFlags) -> Bool {
+        let typing = isTypingInInput
+        let reading = stage.isPresented && controller.showsPanel && !typing && !isInWebPage
+
+        if modifiers == .command {
+            switch event.keyCode {
+            case Key.returnKey, Key.enter:
+                controller.submitToBrowser()
+                return true
+            case Key.upArrow, Key.downArrow:
+                // In the input these move the caret to the start or end.
+                guard reading, canScrollAnswer else { return false }
+                scrollAnswer(event.keyCode == Key.upArrow ? .top : .bottom)
+                return true
+            case Key.delete:
+                // In an empty input there's nothing for ⌘⌫ to delete.
+                guard controller.showsHistory, !typing || controller.query.isEmpty else { return false }
+                controller.deleteSelectedConversation()
+                return true
+            default:
+                break
+            }
+            for provider in ProviderKind.allCases {
+                let digit = "\(provider.number)"
+                if Self.matches(event, character: digit, keyCode: Key.digits[provider.number - 1])
+                    || event.keyCode == Key.digits[provider.number - 1] {
+                    AppSettings.shared.provider = provider
+                    return true
+                }
+            }
+            if Self.matches(event, character: "w", keyCode: 13) {
+                hideFlyby()
+                return true
+            }
+            if Self.matches(event, character: "k", keyCode: 40) {
+                // After this key event is done with: the menu runs a tracking
+                // loop of its own.
+                DispatchQueue.main.async { [weak self] in
+                    guard let self else { return }
+                    ProviderMenu.shared.show(for: self.controller)
+                }
+                return true
+            }
+            if Self.matches(event, character: "/", keyCode: 44) {
+                controller.showsShortcuts.toggle()
+                return true
+            }
+            if Self.matches(event, character: "n", keyCode: 45), controller.showsPanel {
+                controller.newChat()
+                return true
+            }
+            if Self.matches(event, character: "y", keyCode: 16) {
+                controller.toggleHistory()
+                return true
+            }
+            if Self.matches(event, character: ".", keyCode: 47) {
+                // Stop, or nothing. Left alone, ⌘. is Cocoa's "cancel" and
+                // would close Flyby outright, skipping Esc's steps back.
+                controller.stop()
+                return true
+            }
+            if Self.matches(event, character: "r", keyCode: 15), controller.isResultVisible {
+                controller.retry()
+                return true
+            }
         }
         if modifiers == [.command, .shift], Self.matches(event, character: "c", keyCode: 8), controller.isResultVisible {
             controller.copyAnswer()
             return true
         }
         return false
+    }
+
+    /// There's a conversation on the card to scroll — not the history list,
+    /// not Google's page.
+    private var canScrollAnswer: Bool {
+        stage.isPresented && controller.isResultVisible && !controller.showsHistory && !controller.showsWebPage
+    }
+
+    private func scrollAnswer(_ scroll: AnswerScroll) {
+        NotificationCenter.default.post(name: .flybyShouldScrollAnswer, object: scroll)
+    }
+
+    /// Text rather than a key that moves or edits: the function and arrow
+    /// keys type characters in the private-use range, Return and friends
+    /// control characters.
+    private static func isPrintable(_ event: NSEvent) -> Bool {
+        guard let scalar = event.characters?.unicodeScalars.first else { return false }
+        if scalar.value < 0x20 || scalar.value == 0x7F { return false }
+        if (0xF700...0xF8FF).contains(scalar.value) { return false }
+        return true
+    }
+
+    /// Virtual key codes, which name positions rather than characters — right
+    /// for keys that aren't letters.
+    private enum Key {
+        static let returnKey: UInt16 = 36
+        static let enter: UInt16 = 76
+        static let tab: UInt16 = 48
+        static let space: UInt16 = 49
+        static let delete: UInt16 = 51
+        static let escape: UInt16 = 53
+        static let home: UInt16 = 115
+        static let pageUp: UInt16 = 116
+        static let end: UInt16 = 119
+        static let pageDown: UInt16 = 121
+        static let downArrow: UInt16 = 125
+        static let upArrow: UInt16 = 126
+        /// 1 to 4 along the top row.
+        static let digits: [UInt16] = [18, 19, 20, 21]
     }
 
     /// Matches by the character the layout types, as menus do, falling back
@@ -198,7 +370,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     /// Re-opening the app from Finder or `open -a` has nowhere to go for a
-    /// menu-bar-only app, so treat it as a request for the pill — unless the
+    /// menu-bar-only app, so treat it as a request for Flyby — unless the
     /// user is mid-onboarding, in which case bring that back instead.
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows: Bool) -> Bool {
         handleOpenRequest()
@@ -211,16 +383,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             NSApp.activate()
             onboardingWindow.makeKeyAndOrderFront(nil)
         } else {
-            showPill()
+            showFlyby()
         }
     }
 
-    /// A second copy launched while this one runs asks for the pill and quits
+    /// A second copy launched while this one runs asks for Flyby and quits
     /// (see `SingleInstance`); from the user's side, launching Flyby again
     /// opens Flyby.
     private func observeOtherInstances() {
         DistributedNotificationCenter.default()
-            .publisher(for: SingleInstance.showPillRequest)
+            .publisher(for: SingleInstance.showRequest)
             .receive(on: RunLoop.main)
             .sink { [weak self] _ in self?.handleOpenRequest() }
             .store(in: &cancellables)
@@ -249,7 +421,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             // The onboarding practice step listens for this as proof the
             // pipeline works end to end.
             NotificationCenter.default.post(name: .flybyDidTriggerShortcut, object: nil)
-            self?.togglePill()
+            self?.toggleFlyby()
         }
         hotKeys.onAccessibilityLost = { [weak self] in
             // Revoked while running. Same state as a launch without the grant:
@@ -411,13 +583,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     // MARK: - Showing and hiding
 
-    private func togglePill() {
-        if stage.isPresented { hidePill() } else { showPill() }
+    private func toggleFlyby() {
+        if stage.isPresented { hideFlyby() } else { showFlyby() }
     }
 
-    private func showPill() {
+    private func showFlyby() {
         guard isRunning else { return }
         presentationGeneration += 1
+        let generation = presentationGeneration
+        // Folded up first, so emptying the panel of a close still in progress
+        // doesn't play the card folding back into the bar on its way out.
+        stage.prepare()
         controller.reset()
         guard let screen = FlybyPanel.activeScreen else { return }
 
@@ -428,27 +604,32 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             previousApp = frontmost
         }
 
-        // Folded up and in place before the window shows, so the first frame
-        // is the blob the pill opens out of.
-        stage.prepare()
+        // In place before the window shows, so the first frame is the blob
+        // the bar opens out of.
         panel.position(on: screen)
+        panel.ignoresMouseEvents = false
         NSApp.activate()
         panel.makeKeyAndOrderFront(nil)
-        NotificationCenter.default.post(name: .quickSearchDidShow, object: nil)
+        // Now, not on SwiftUI's next pass: typing works from the first key.
+        panel.focusInput()
         startWatchingForOutsideClicks()
         // Next pass, once the folded state has been drawn: animating from a
-        // state that never reached the screen would skip the opening.
+        // state that never reached the screen would skip the opening. Not if
+        // it was closed again in the meantime.
         DispatchQueue.main.async { [weak self] in
-            guard let self, self.panel.isVisible else { return }
+            guard let self, self.panel.isVisible, generation == self.presentationGeneration else { return }
             self.stage.present()
+            Self.log.info("presented inputFocused=\(self.panel.inputEditor != nil, privacy: .public)")
         }
 
-        // A cold Google page costs the first AI Mode search a second or two;
-        // warming it while the user types hides that.
-        if AppSettings.shared.provider == .aiMode {
-            controller.aiMode.prewarm()
+        // A cold Google page, or a cold on-device model, costs the first
+        // answer a second or two; warming it while the user types hides that.
+        switch AppSettings.shared.provider {
+        case .aiMode:            controller.aiMode.prewarm()
+        case .appleIntelligence: AppleIntelligenceProvider.prewarm()
+        case .browser, .gemini:  break
         }
-        Self.log.info("pill shown visible=\(self.panel.isVisible, privacy: .public) frame=\(NSStringFromRect(self.panel.frame), privacy: .public)")
+        Self.log.info("shown visible=\(self.panel.isVisible, privacy: .public) frame=\(NSStringFromRect(self.panel.frame), privacy: .public)")
     }
 
     /// `returnFocus` is false when the dismissal came from a click elsewhere:
@@ -457,9 +638,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// Focus goes back at once — whatever is typed during the closing
     /// animation belongs to the app the user is returning to — while the
     /// window stays up for the animation and goes once it has played.
-    private func hidePill(returnFocus: Bool = true) {
-        guard stage.isPresented || panel.isVisible else { return }
+    private func hideFlyby(returnFocus: Bool = true) {
+        // Already on its way out: a second Esc shouldn't cut the close short.
+        guard !stage.isClosing, stage.isPresented || panel.isVisible else { return }
         stopWatchingForOutsideClicks()
+        // What's left on screen is on its way out; clicks on it belong to
+        // whatever is underneath.
+        panel.ignoresMouseEvents = true
         presentationGeneration += 1
         let generation = presentationGeneration
 
@@ -490,7 +675,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     /// Settings, onboarding, the Google sign-in window, an alert: any titled
-    /// window of ours still on screen besides the pill.
+    /// window of ours still on screen besides Flyby's own.
     private var visibleAuxiliaryWindow: NSWindow? {
         NSApp.windows.first { window in
             window !== panel
@@ -499,18 +684,33 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    private func observeDismissRequests() {
-        NotificationCenter.default.publisher(for: .quickSearchShouldDismiss)
+    /// /settings. Flyby steps aside first, as it does for "Connect Google
+    /// Account…": Settings is a window of its own, and a floating bar over it
+    /// would only be in the way.
+    private func observeSettingsRequests() {
+        NotificationCenter.default.publisher(for: .flybyShouldOpenSettings)
             .receive(on: RunLoop.main)
-            .sink { [weak self] _ in self?.hidePill() }
+            .sink { [weak self] _ in
+                guard let self else { return }
+                if self.stage.isPresented { self.hideFlyby(returnFocus: false) }
+                self.openSettings()
+            }
             .store(in: &cancellables)
     }
 
-    /// "Recent Chats" from the pill's menu.
-    private func observeHistoryRequests() {
-        NotificationCenter.default.publisher(for: .flybyShouldShowHistory)
+    /// The controller hands the keyboard back to the input after a question
+    /// is sent, a chat is opened, or the history list closes.
+    private func observeFocusRequests() {
+        NotificationCenter.default.publisher(for: .flybyShouldFocusInput)
             .receive(on: RunLoop.main)
-            .sink { [weak self] _ in self?.controller.openHistory() }
+            .sink { [weak self] _ in self?.panel.focusInput() }
+            .store(in: &cancellables)
+    }
+
+    private func observeDismissRequests() {
+        NotificationCenter.default.publisher(for: .quickSearchShouldDismiss)
+            .receive(on: RunLoop.main)
+            .sink { [weak self] _ in self?.hideFlyby() }
             .store(in: &cancellables)
     }
 
@@ -519,7 +719,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         outsideClickMonitor = NSEvent.addGlobalMonitorForEvents(
             matching: [.leftMouseDown, .rightMouseDown]
         ) { [weak self] _ in
-            MainActor.assumeIsolated { self?.hidePill(returnFocus: false) }
+            MainActor.assumeIsolated { self?.hideFlyby(returnFocus: false) }
         }
     }
 
@@ -629,15 +829,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             .store(in: &cancellables)
     }
 
-    /// "Connect Google Account…" from the pill's menu or the result panel's
-    /// banner. The pill closes first: Settings is where the connecting
-    /// happens, and a floating pill over it would only be in the way.
+    /// "Connect Google Account…" from the provider menu or the card's banner.
+    /// Flyby closes first: Settings is where the connecting happens, and a
+    /// floating card over it would only be in the way.
     private func observeGoogleSettingsRequests() {
         NotificationCenter.default.publisher(for: .flybyShouldShowGoogleSettings)
             .receive(on: RunLoop.main)
             .sink { [weak self] _ in
                 guard let self else { return }
-                if self.stage.isPresented { self.hidePill(returnFocus: false) }
+                if self.stage.isPresented { self.hideFlyby(returnFocus: false) }
                 self.openSettings()
             }
             .store(in: &cancellables)
@@ -676,7 +876,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc private func openFromMenu() {
-        showPill()
+        showFlyby()
     }
 
     // MARK: - Onboarding
@@ -694,6 +894,33 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             .store(in: &cancellables)
     }
 
+    /// Dev builds only: opens a window at launch, so it can be looked at (and
+    /// screenshotted) without clicking through the menu bar. Arguments land in
+    /// the volatile defaults domain, so nothing is remembered:
+    ///
+    ///     open "build/Flyby Dev.app" --args -FlybyDebugOpen onboarding
+    ///     open "build/Flyby Dev.app" --args -FlybyDebugOpen settings.answers
+    ///
+    /// `-FlybyDebugAppearance light|dark` sets the app's appearance. Every
+    /// Flyby window pins itself dark, so `light` only proves that still holds.
+    private func openDebugWindowIfAsked() {
+        guard BuildFlavor.isDev else { return }
+        switch UserDefaults.standard.string(forKey: "FlybyDebugAppearance") {
+        case "light": NSApp.appearance = NSAppearance(named: .aqua)
+        case "dark":  NSApp.appearance = NSAppearance(named: .darkAqua)
+        default:      break
+        }
+        guard let target = UserDefaults.standard.string(forKey: "FlybyDebugOpen") else { return }
+        if target == "onboarding" {
+            showOnboarding()
+        } else if target.hasPrefix("settings") {
+            if let section = SettingsSection(rawValue: String(target.dropFirst("settings.".count))) {
+                SettingsNavigation.shared.section = section
+            }
+            openSettings()
+        }
+    }
+
     private func showOnboarding() {
         if let onboardingWindow {
             NSApp.activate()
@@ -701,22 +928,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
 
-        let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 580, height: 560),
-            styleMask: [.titled, .closable, .fullSizeContentView],
-            backing: .buffered,
-            defer: false
+        let window = OnboardingView.makeWindow(
+            onRecordingChanged: { [weak self] recording in self?.setRecording(recording) },
+            onFinished: { [weak self] in self?.finishOnboarding() }
         )
-        window.titlebarAppearsTransparent = true
-        window.titleVisibility = .hidden
-        window.isMovableByWindowBackground = true
         window.isReleasedWhenClosed = false
-        window.contentView = NSHostingView(
-            rootView: OnboardingView(
-                onRecordingChanged: { [weak self] recording in self?.setRecording(recording) },
-                onFinished: { [weak self] in self?.finishOnboarding() }
-            )
-        )
         window.center()
         window.delegate = self
         onboardingWindow = window
@@ -745,21 +961,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
 
-        let window = NSWindow(
-            contentRect: NSRect(origin: .zero, size: SettingsView.size),
-            styleMask: [.titled, .closable],
-            backing: .buffered,
-            defer: false
-        )
-        window.title = "\(BuildFlavor.appName) Settings"
+        let window = SettingsView.makeWindow(onRecordingChanged: { [weak self] recording in
+            self?.setRecording(recording)
+        })
         window.isReleasedWhenClosed = false
         window.center()
         window.delegate = self
-        window.contentView = NSHostingView(
-            rootView: SettingsView(onRecordingChanged: { [weak self] recording in
-                self?.setRecording(recording)
-            })
-        )
         settingsWindow = window
 
         NSApp.activate()

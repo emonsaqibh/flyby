@@ -3,12 +3,14 @@ import SwiftUI
 
 /// Settings › General › Updates.
 ///
-/// A `Section`, so it drops straight into the grouped settings form.
+/// A `Section`, so it drops straight into the grouped settings form. The
+/// latest check's outcome is a row of its own, and changes shape as well as
+/// colour when it lands.
 struct UpdateSettingsSection: View {
     @ObservedObject private var updater = Updater.shared
 
     var body: some View {
-        Section("Updates") {
+        Section {
             if updater.isEnabled {
                 Toggle("Check for updates automatically", isOn: $updater.checksAutomatically)
                 Toggle("Include beta versions", isOn: $updater.includesPrereleases)
@@ -22,39 +24,59 @@ struct UpdateSettingsSection: View {
                             .disabled(updater.state == .checking)
                     }
                 } label: {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("Version \(BuildFlavor.versionLabel)")
-                        Text(lastChecked)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
+                    Text("Version \(BuildFlavor.versionLabel)")
+                    Text(lastChecked)
                 }
 
-                if let release = updater.available {
-                    VStack(alignment: .leading, spacing: 10) {
-                        HStack(spacing: 6) {
-                            Text("Version \(release.version.description) is available.")
-                                .font(.callout.weight(.semibold))
-                            Button("What’s New") { NSWorkspace.shared.open(release.page) }
-                                .buttonStyle(.link)
-                        }
-                        UpdateSteps()
-                    }
-                    .padding(.vertical, 4)
-                } else if updater.state == .upToDate {
-                    Label("You’re up to date.", systemImage: "checkmark.circle.fill")
-                        .font(.callout)
-                        .foregroundStyle(.green)
-                } else if case .failed(let message) = updater.state {
-                    Label(message, systemImage: "exclamationmark.triangle")
-                        .font(.callout)
-                        .foregroundStyle(.orange)
-                }
+                outcome
             } else {
-                Text("Updates are off in the dev build — rebuild it with ./build.sh, or install a release.")
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
+                LabeledContent("Automatic updates") {
+                    Text("Off in dev builds")
+                        .foregroundStyle(.secondary)
+                }
             }
+        } header: {
+            Text("Updates")
+        } footer: {
+            if !updater.isEnabled {
+                Text("The dev build never checks — rebuild it with ./build.sh, or install a release.")
+            }
+        }
+        .animation(.smooth, value: updater.state)
+    }
+
+    @ViewBuilder
+    private var outcome: some View {
+        if let release = updater.available {
+            VStack(alignment: .leading, spacing: 10) {
+                HStack(spacing: 6) {
+                    Label("Version \(release.version.description) is available.", systemImage: "arrow.down.circle.fill")
+                        .font(.callout.weight(.semibold))
+                        .symbolRenderingMode(.hierarchical)
+                        .foregroundStyle(.tint)
+                    Button("What’s New") { NSWorkspace.shared.open(release.page) }
+                        .buttonStyle(.link)
+                }
+                UpdateSteps()
+            }
+            .padding(.vertical, 4)
+        } else if updater.state == .upToDate {
+            Label {
+                Text("You’re up to date.")
+            } icon: {
+                Image(systemName: "checkmark.circle.fill")
+                    .foregroundStyle(.green)
+                    .symbolEffect(.bounce, options: .nonRepeating, value: updater.lastChecked)
+            }
+            .font(.callout)
+        } else if case .failed(let message) = updater.state {
+            Label {
+                Text(message)
+            } icon: {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .symbolRenderingMode(.multicolor)
+            }
+            .font(.callout)
         }
     }
 
@@ -76,14 +98,15 @@ struct UpdateSteps: View {
                 step(1)
                 Button {
                     Updater.copyInstallCommand()
-                    copied = true
+                    withAnimation(.smooth) { copied = true }
                     Task {
                         try? await Task.sleep(nanoseconds: 2_000_000_000)
-                        copied = false
+                        withAnimation(.smooth) { copied = false }
                     }
                 } label: {
                     Label(copied ? "Copied" : "Copy Install Command",
                           systemImage: copied ? "checkmark" : "doc.on.doc")
+                        .contentTransition(.symbolEffect(.replace))
                 }
                 .controlSize(.small)
                 .help(Updater.installCommand)

@@ -2,67 +2,159 @@ import SwiftUI
 import AppKit
 import FlybyCore
 
-/// The conversation: each question and its answer, oldest at the top, in
-/// one comfortably narrow reading column. The live turn — the one still
+/// The conversation: each question in a bubble on the right, its answer as
+/// plain text under it, oldest at the top. The live turn — the one still
 /// answering, or the last one — carries the sources, the suggested next
 /// questions and the error card; earlier turns keep their answer and sources.
+///
+/// It scrolls the card's full height and follows the answer down as it
+/// streams, until you scroll up to read; scrolling back to the end picks
+/// it up again.
 struct ConversationView: View {
     @ObservedObject var controller: SearchController
-    /// Height of the header floating over the top of the panel. Content starts
-    /// below it and scrolls up underneath it.
-    var topInset: CGFloat = 0
-    /// Dissolve content as it scrolls under the header. For the glass look,
-    /// where the header has no bar of its own to hide it behind.
-    var fadesUnderHeader = false
+    /// Where questions fly in from, shared with the input.
+    let questions: Namespace.ID
+
+    @State private var scroll = ScrollPosition(idType: UUID.self)
+    @State private var followsAnswer = true
+    /// The conversation is long enough to run under the input — until it is,
+    /// the bottom edge doesn't fade (see `cardScrollEdges`).
+    @State private var reachesInput = false
+    /// Where the scroll is, for the keyboard to scroll from. Kept out of
+    /// SwiftUI's sight: it changes every frame of a scroll, and nothing on
+    /// screen depends on it.
+    @State private var lastGeometry = GeometryBox()
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
-        ScrollViewReader { reader in
-            ScrollView {
-                VStack(alignment: .leading, spacing: 34) {
-                    ForEach(controller.earlierTurns) { turn in
-                        EarlierTurnView(turn: turn)
-                    }
+        ScrollView {
+            VStack(alignment: .leading, spacing: 30) {
+                ForEach(controller.earlierTurns) { turn in
+                    // Appears exactly where the live turn it was a moment
+                    // ago stood — a fade would flash it.
+                    EarlierTurnView(turn: turn, questions: questions)
+                        .transition(.identity)
+                }
 
-                    liveTurn
-                        .id(controller.liveTurnID)
-                }
-                // A line of 14pt text wider than this is hard to track back
-                // across; on a wide panel the column centres instead of sprawling.
-                .frame(maxWidth: AnswerMetrics.readingWidth, alignment: .leading)
-                .frame(maxWidth: .infinity)
-                .padding(.horizontal, 24)
-                .padding(.top, topInset + 6)
-                .padding(.bottom, 26)
+                liveTurn
             }
-            .softTopScrollEdge()
-            // Each new question scrolls to the top of the view, so its answer
-            // has the whole panel to arrive in.
-            .onChange(of: controller.liveTurnID) {
-                guard !controller.earlierTurns.isEmpty else { return }
-                withAnimation(.spring(response: 0.45, dampingFraction: 0.9)) {
-                    reader.scrollTo(controller.liveTurnID, anchor: .top)
-                }
-            }
-            .onAppear {
-                if !controller.earlierTurns.isEmpty {
-                    reader.scrollTo(controller.liveTurnID, anchor: .top)
-                }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, AnswerMetrics.sideInset)
+            .padding(.top, 4)
+            .padding(.bottom, 12)
+            // A new question is a spring even when the card is already out,
+            // so it can be seen travelling from the input to its bubble.
+            .animation(Motion.morph, value: controller.liveTurnID)
+        }
+        .scrollPosition($scroll)
+        .cardScrollEdges(reachesInput: reachesInput)
+        .onScrollGeometryChange(for: Bool.self, of: Self.overflows) { _, overflows in
+            reachesInput = overflows
+        }
+        .onScrollGeometryChange(for: ScrollGeometry.self, of: { $0 }) { _, geometry in
+            lastGeometry.value = geometry
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .flybyShouldScrollAnswer)) { note in
+            if let command = note.object as? AnswerScroll { keyboardScroll(command) }
+        }
+        .onScrollPhaseChange { oldPhase, newPhase, context in
+            // Only the reader turns following off and on. Settling after a
+            // scroll of our own doesn't count, or an answer that grew during
+            // it would be left behind.
+            if newPhase == .interacting {
+                followsAnswer = false
+            } else if newPhase == .idle, oldPhase == .interacting || oldPhase == .decelerating {
+                followsAnswer = Self.isAtEnd(context.geometry)
             }
         }
-        .mask {
-            if fadesUnderHeader {
-                headerFade
+        .onScrollGeometryChange(for: CGFloat.self, of: { $0.contentSize.height }) { oldHeight, newHeight in
+            guard followsAnswer, newHeight > oldHeight else { return }
+            withAnimation(Motion.follow) { scroll.scrollTo(edge: .bottom) }
+        }
+        .onChange(of: controller.liveTurnID) {
+            showLiveTurn(animated: true)
+        }
+        .onAppear {
+            showLiveTurn(animated: false)
+        }
+    }
+
+    /// A new question lands at the end, just above the input, and the answer
+    /// pushes it up as it arrives. A chat reopened from history opens on its
+    /// last question instead, to be read from there.
+    private func showLiveTurn(animated: Bool) {
+        guard !controller.earlierTurns.isEmpty else {
+            followsAnswer = true
+            return
+        }
+        withAnimation(animated ? Motion.follow : nil) {
+            if controller.isRestored {
+                followsAnswer = false
+                scroll.scrollTo(id: controller.liveTurnID, anchor: .top)
             } else {
-                Rectangle()
+                followsAnswer = true
+                scroll.scrollTo(edge: .bottom)
             }
         }
     }
 
+    /// The reading keys: a line is a couple of lines of text, a page is the
+    /// visible part less a little overlap, so the eye has somewhere to land.
+    /// Scrolling to the end turns following back on; anywhere else, off.
+    private func keyboardScroll(_ command: AnswerScroll) {
+        switch command {
+        case .top:
+            followsAnswer = false
+            withAnimation(Motion.follow) { scroll.scrollTo(edge: .top) }
+            return
+        case .bottom:
+            followsAnswer = true
+            withAnimation(Motion.follow) { scroll.scrollTo(edge: .bottom) }
+            return
+        default:
+            break
+        }
+        guard let geometry = lastGeometry.value else { return }
+        let insets = geometry.contentInsets
+        let visible = geometry.containerSize.height - insets.top - insets.bottom
+        let page = max(visible - 48, 80)
+        let step: CGFloat
+        switch command {
+        case .lineUp:   step = -48
+        case .lineDown: step = 48
+        case .pageUp:   step = -page
+        default:        step = page
+        }
+        let top = -insets.top
+        let bottom = max(top, geometry.contentSize.height + insets.bottom - geometry.containerSize.height)
+        let target = min(max(geometry.contentOffset.y + step, top), bottom)
+        followsAnswer = target >= bottom - 1
+        withAnimation(Motion.follow) { scroll.scrollTo(y: target) }
+    }
+
+    private static func isAtEnd(_ geometry: ScrollGeometry) -> Bool {
+        geometry.visibleRect.maxY >= geometry.contentSize.height - 40
+    }
+
+    private static func overflows(_ geometry: ScrollGeometry) -> Bool {
+        let insets = geometry.contentInsets.top + geometry.contentInsets.bottom
+        return geometry.contentSize.height + insets > geometry.containerSize.height + 1
+    }
+
     private var liveTurn: some View {
-        VStack(alignment: .leading, spacing: 24) {
-            // The first question is already the panel's title.
-            if !controller.earlierTurns.isEmpty {
-                QuestionBubble(text: controller.submittedQuery)
+        VStack(alignment: .leading, spacing: 16) {
+            QuestionRow {
+                if !controller.submittedQuery.isEmpty {
+                    QuestionBubble(text: controller.submittedQuery)
+                        .matchedGeometryEffect(id: controller.liveTurnID, in: questions, properties: .position)
+                        // A new question is a new bubble. The one it replaces
+                        // is now an earlier turn's, standing in the same place.
+                        .id(controller.liveTurnID)
+                        .transition(.asymmetric(
+                            insertion: reduceMotion ? .opacity : .questionArrival(from: arrivalScale),
+                            removal: .identity
+                        ))
+                }
             }
 
             if let message = failureMessage {
@@ -71,6 +163,7 @@ struct ConversationView: View {
                     onRetry: { controller.retry() },
                     onOpenInBrowser: { controller.submitToBrowser() }
                 )
+                .transition(.arrive)
             }
 
             if !controller.answer.isEmpty {
@@ -78,25 +171,26 @@ struct ConversationView: View {
                     blocks: controller.answer.blocks,
                     isStreaming: controller.phase == .streaming
                 )
+                .transition(.arrive)
             } else if controller.isBusy {
                 AnswerSkeleton()
                     .transition(.opacity)
             } else if controller.phase == .complete {
                 Text("Nothing came back for this one. Try rewording it, or open it in your browser.")
-                    .font(.system(size: 14))
+                    .font(.system(size: AnswerMetrics.bodySize))
                     .foregroundStyle(.secondary)
             }
 
             if !controller.answer.sources.isEmpty {
                 SourcesSection(sources: controller.answer.sources)
-                    .transition(.opacity)
+                    .transition(.arrive)
             }
 
             // Only once the answer has settled: a suggestion that changes
             // under the pointer mid-stream is a misclick waiting to happen.
             if !controller.answer.followUps.isEmpty, !controller.isBusy {
                 FollowUpsSection(followUps: controller.answer.followUps) { controller.ask($0) }
-                    .transition(.opacity)
+                    .transition(.arrive)
             }
         }
         .animation(.easeOut(duration: 0.25), value: controller.answer.isEmpty)
@@ -104,43 +198,52 @@ struct ConversationView: View {
         .animation(.easeOut(duration: 0.25), value: controller.isBusy)
     }
 
+    /// The first question comes from the bar, in the bar's large type; later
+    /// ones from the card's field, in the bubble's own size.
+    private var arrivalScale: CGFloat {
+        let typed = controller.earlierTurns.isEmpty ? InputStyle.bar.fontSize : InputStyle.field.fontSize
+        return typed / AnswerMetrics.questionSize
+    }
+
     private var failureMessage: String? {
         if case .failed(let message) = controller.phase { return message }
         return nil
     }
+}
 
-    /// Transparent under the header's title and buttons, opaque just below
-    /// it — so text scrolling up dissolves instead of colliding with them.
-    private var headerFade: some View {
-        VStack(spacing: 0) {
-            LinearGradient(
-                gradient: Gradient(stops: [
-                    .init(color: .clear, location: 0),
-                    .init(color: .clear, location: 0.55),
-                    .init(color: .black, location: 1),
-                ]),
-                startPoint: .top,
-                endPoint: .bottom
-            )
-            .frame(height: topInset + 4)
-            Rectangle()
-        }
-    }
+/// Holds the latest scroll geometry without SwiftUI watching it.
+private final class GeometryBox {
+    var value: ScrollGeometry?
+}
+
+/// A keyboard scroll of the conversation, from the app delegate's key
+/// monitor.
+enum AnswerScroll {
+    case lineUp, lineDown, pageUp, pageDown, top, bottom
+}
+
+extension Notification.Name {
+    /// Carries an `AnswerScroll`.
+    static let flybyShouldScrollAnswer = Notification.Name("flybyShouldScrollAnswer")
 }
 
 /// A finished turn: the question, and the answer as it stood.
 private struct EarlierTurnView: View {
     let turn: ConversationTurn
+    let questions: Namespace.ID
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 18) {
-            QuestionBubble(text: turn.query)
+        VStack(alignment: .leading, spacing: 16) {
+            QuestionRow {
+                QuestionBubble(text: turn.query)
+                    .matchedGeometryEffect(id: turn.id, in: questions, properties: .position)
+            }
 
             if !turn.answer.isEmpty {
                 AnswerBlocksView(blocks: turn.answer.blocks)
             } else if let failure = turn.failure {
                 Label(failure, systemImage: "exclamationmark.triangle")
-                    .font(.system(size: 13))
+                    .font(.system(size: 14))
                     .foregroundStyle(.secondary)
             }
 
@@ -151,39 +254,130 @@ private struct EarlierTurnView: View {
     }
 }
 
-/// What you asked, on the right in a tinted bubble — the shape every chat
-/// uses for "you".
-struct QuestionBubble: View {
-    let text: String
-    @ObservedObject private var settings = AppSettings.shared
+/// Right-aligns a question, leaving room on its left so it reads as a reply
+/// bubble rather than a banner. Always there, even empty, so a bubble
+/// arriving in it is the view being inserted — and its own transition is
+/// the one that plays.
+private struct QuestionRow<Content: View>: View {
+    @ViewBuilder let content: Content
 
     var body: some View {
-        HStack {
-            Spacer(minLength: 60)
-            Text(text)
-                .font(.system(size: 14, weight: .medium))
-                .textSelection(.enabled)
-                .padding(.horizontal, 14)
-                .padding(.vertical, 9)
-                .background(
-                    RoundedRectangle(cornerRadius: 18, style: .continuous)
-                        .fill(settings.accent.color.opacity(0.16))
-                )
-                .fixedSize(horizontal: false, vertical: true)
+        HStack(spacing: 0) {
+            Spacer(minLength: AnswerMetrics.bubbleLeadingRoom)
+            content
         }
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel("You asked: \(text)")
+    }
+}
+
+/// What you asked, in a dark bubble with a tail — the shape every chat uses
+/// for "you".
+struct QuestionBubble: View {
+    let text: String
+    /// How far the bubble has filled in around the text; see
+    /// `QuestionArrival`.
+    @Environment(\.questionChrome) private var chrome
+
+    var body: some View {
+        Text(text)
+            .font(.system(size: AnswerMetrics.questionSize))
+            .foregroundStyle(.primary)
+            .textSelection(.enabled)
+            .fixedSize(horizontal: false, vertical: true)
+            .padding(.horizontal, 14)
+            .padding(.vertical, 9)
+            .background(QuestionBubbleShape().fill(Palette.bubble).opacity(chrome))
+            .accessibilityElement(children: .combine)
+            .accessibilityLabel("You asked: \(text)")
+    }
+}
+
+/// A rounded rectangle with a tail curling out of its bottom-trailing
+/// corner.
+struct QuestionBubbleShape: Shape {
+    var cornerRadius: CGFloat = 18
+
+    func path(in rect: CGRect) -> Path {
+        let bubble = Path(roundedRect: rect, cornerRadius: cornerRadius, style: .continuous)
+        var tail = Path()
+        // From the bottom edge, out to a point just past the corner, and back
+        // up into the trailing edge — well inside the rounded corner, so the
+        // union has no seam.
+        tail.move(to: CGPoint(x: rect.maxX - 16, y: rect.maxY))
+        tail.addCurve(
+            to: CGPoint(x: rect.maxX + 5, y: rect.maxY + 1),
+            control1: CGPoint(x: rect.maxX - 6, y: rect.maxY),
+            control2: CGPoint(x: rect.maxX + 1, y: rect.maxY + 1)
+        )
+        tail.addCurve(
+            to: CGPoint(x: rect.maxX - 1, y: rect.maxY - 14),
+            control1: CGPoint(x: rect.maxX, y: rect.maxY - 2),
+            control2: CGPoint(x: rect.maxX - 1, y: rect.maxY - 8)
+        )
+        tail.closeSubpath()
+        return bubble.union(tail)
+    }
+}
+
+extension EnvironmentValues {
+    /// 0 while a question is still in flight to its bubble, 1 once it's
+    /// landed: the bubble behind the text fills in as it arrives.
+    @Entry var questionChrome: Double = 1
+}
+
+/// A question arriving in the conversation. It starts where the input had
+/// it (the shared identity puts it there) at the size it was typed in, and
+/// settles to the bubble's size while the bubble fills in around it — so
+/// what you see is your own text lifting out of the input.
+private struct QuestionArrival: ViewModifier, Animatable {
+    var progress: Double
+    let typedScale: CGFloat
+
+    var animatableData: Double {
+        get { progress }
+        set { progress = newValue }
+    }
+
+    func body(content: Content) -> some View {
+        content
+            .environment(\.questionChrome, progress)
+            .scaleEffect(typedScale + (1 - typedScale) * progress)
+    }
+}
+
+extension AnyTransition {
+    fileprivate static func questionArrival(from typedScale: CGFloat) -> AnyTransition {
+        .modifier(
+            active: QuestionArrival(progress: 0, typedScale: typedScale),
+            identity: QuestionArrival(progress: 1, typedScale: typedScale)
+        )
+    }
+
+    /// Fades in; leaves at once. What leaves the live turn is either replaced
+    /// by the same thing in an earlier turn or gone with the whole card, and
+    /// fading it would show it twice, or late.
+    fileprivate static var arrive: AnyTransition {
+        .asymmetric(insertion: .opacity, removal: .identity)
     }
 }
 
 enum AnswerMetrics {
-    static let readingWidth: CGFloat = 700
+    /// Siri's answer size. On a card this narrow a line holds about 60
+    /// characters, which is what reads comfortably.
+    static let bodySize: CGFloat = 16
+    static let lineSpacing: CGFloat = 3
+    /// The question in its bubble — a step below the answer, which is what
+    /// you're here to read.
+    static let questionSize: CGFloat = 15
+    /// Between the card's edges and the text.
+    static let sideInset: CGFloat = 24
+    /// Room a question bubble always leaves on its left.
+    static let bubbleLeadingRoom: CGFloat = 120
 }
 
 // MARK: - Waiting
 
 /// Placeholder lines while nothing has arrived, with a slow sheen passing
-/// over them — so the panel reads as "answer loading" rather than "empty".
+/// over them — so the card reads as "answer loading" rather than "empty".
 /// The sheen stops under Reduce Motion; the lines stay.
 struct AnswerSkeleton: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -191,8 +385,8 @@ struct AnswerSkeleton: View {
 
     /// Line lengths as fractions of the column; 0 is a paragraph break.
     private static let lines: [CGFloat] = [0.94, 0.99, 0.87, 0.58, 0, 0.97, 0.91, 0.72]
-    private static let lineHeight: CGFloat = 11
-    private static let lineSpacing: CGFloat = 10
+    private static let lineHeight: CGFloat = 12
+    private static let lineSpacing: CGFloat = 11
     private static let breakHeight: CGFloat = 4
 
     private static var height: CGFloat {
@@ -207,7 +401,7 @@ struct AnswerSkeleton: View {
         GeometryReader { proxy in
             let width = proxy.size.width
             bars(width: width)
-                .foregroundStyle(Color.primary.opacity(0.07))
+                .foregroundStyle(Color.primary.opacity(0.08))
                 .overlay {
                     if !reduceMotion {
                         LinearGradient(
@@ -260,14 +454,14 @@ struct AnswerErrorCard: View {
         VStack(alignment: .leading, spacing: 12) {
             Label {
                 Text("No answer this time")
-                    .font(.system(size: 14, weight: .semibold))
+                    .font(.system(size: 15, weight: .semibold))
             } icon: {
                 Image(systemName: "exclamationmark.triangle.fill")
                     .foregroundStyle(.orange)
             }
 
             Text(message)
-                .font(.system(size: 13))
+                .font(.system(size: 14))
                 .foregroundStyle(.secondary)
                 .textSelection(.enabled)
                 .fixedSize(horizontal: false, vertical: true)
@@ -326,20 +520,20 @@ private struct SourceCard: View {
                     Favicon(host: source.url.host(percentEncoded: false))
                         .frame(width: 16, height: 16)
                     Text(source.displaySite)
-                        .font(.system(size: 11, weight: .medium))
+                        .font(.system(size: 11.5, weight: .medium))
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
                 }
 
                 Text(source.title.isEmpty ? source.displaySite : source.title)
-                    .font(.system(size: 12.5, weight: .medium))
+                    .font(.system(size: 13, weight: .medium))
                     .foregroundStyle(.primary)
                     .lineLimit(2)
                     .multilineTextAlignment(.leading)
                     .frame(maxWidth: .infinity, alignment: .topLeading)
             }
             .padding(10)
-            .frame(width: 200, height: 78, alignment: .topLeading)
+            .frame(width: 200, height: 80, alignment: .topLeading)
             .background(
                 RoundedRectangle(cornerRadius: 12, style: .continuous)
                     .fill(Color.primary.opacity(hovering ? 0.10 : 0.05))
@@ -395,8 +589,8 @@ private struct Favicon: View {
 
 // MARK: - Follow-ups
 
-/// The provider's suggested next questions. Clicking one asks it, with the
-/// same provider, and puts it in the pill so it can be edited and re-asked.
+/// The provider's suggested next questions. Clicking one asks it, of the
+/// provider that suggested it.
 struct FollowUpsSection: View {
     let followUps: [String]
     let onAsk: (String) -> Void
@@ -429,9 +623,9 @@ private struct FollowUpChip: View {
                 Image(systemName: "arrow.turn.down.right")
                     .foregroundStyle(.secondary)
             }
-            .font(.system(size: 12.5))
-            .padding(.horizontal, 11)
-            .padding(.vertical, 6)
+            .font(.system(size: 13.5))
+            .padding(.horizontal, 12)
+            .padding(.vertical, 7)
             .background(
                 Capsule().fill(Color.primary.opacity(hovering ? 0.11 : 0.06))
             )

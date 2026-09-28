@@ -2,39 +2,28 @@ import SwiftUI
 import FlybyCore
 
 /// Recent chats, newest first, grouped by when they were last touched.
-/// Click one — or reach it with ↑↓ from the pill and press Return — to carry
+/// Click one — or reach it with ↑↓ from the input and press Return — to carry
 /// on where it left off.
 struct HistoryView: View {
     @ObservedObject var controller: SearchController
     @ObservedObject private var history = ConversationHistory.shared
-    var topInset: CGFloat = 0
-    var fadesUnderHeader = false
 
     var body: some View {
-        Group {
-            if history.summaries.isEmpty {
-                empty
-            } else {
-                list
-            }
-        }
-        .mask {
-            if fadesUnderHeader {
-                VStack(spacing: 0) {
-                    LinearGradient(colors: [.clear, .black], startPoint: .top, endPoint: .bottom)
-                        .frame(height: topInset + 4)
-                    Rectangle()
-                }
-            } else {
-                Rectangle()
-            }
+        if history.summaries.isEmpty {
+            empty
+        } else {
+            list
         }
     }
 
     private var list: some View {
         ScrollViewReader { reader in
             ScrollView {
-                LazyVStack(alignment: .leading, spacing: 2, pinnedViews: []) {
+                LazyVStack(alignment: .leading, spacing: 2) {
+                    title
+                        .padding(.horizontal, 12)
+                        .padding(.bottom, 4)
+
                     ForEach(sections, id: \.title) { section in
                         Text(section.title)
                             .font(.system(size: 11, weight: .semibold))
@@ -56,13 +45,10 @@ struct HistoryView: View {
                         }
                     }
                 }
-                .frame(maxWidth: AnswerMetrics.readingWidth)
-                .frame(maxWidth: .infinity)
-                .padding(.horizontal, 16)
-                .padding(.top, topInset)
-                .padding(.bottom, 20)
+                .padding(.horizontal, 12)
+                .padding(.bottom, 12)
             }
-            .softTopScrollEdge()
+            .cardScrollEdges()
             .onChange(of: controller.historySelection) {
                 guard let id = controller.historySelection else { return }
                 withAnimation(.easeOut(duration: 0.15)) { reader.scrollTo(id, anchor: .center) }
@@ -70,19 +56,51 @@ struct HistoryView: View {
         }
     }
 
+    /// The card has no title bar, so the list says what it is.
+    /// The card has no title bar, so the list says what it is — and how to
+    /// drive it from the keyboard, which is how most people get here (↑).
+    private var title: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Recent Chats")
+                    .font(.system(size: 21, weight: .bold))
+                Text("\(history.summaries.count) saved on this Mac")
+                    .font(.system(size: 12))
+                    .foregroundStyle(.secondary)
+            }
+            .accessibilityElement(children: .combine)
+            .accessibilityAddTraits(.isHeader)
+
+            HStack(spacing: 5) {
+                Keycap("↑ ↓")
+                Text("move")
+                Keycap("↩")
+                Text("open")
+                    .padding(.trailing, 4)
+                Keycap("⌘⌫")
+                Text("delete")
+                    .padding(.trailing, 4)
+                Keycap("esc")
+                Text("back")
+            }
+            .font(.system(size: 11))
+            .foregroundStyle(.secondary)
+            .accessibilityHidden(true)
+        }
+    }
+
     private var empty: some View {
         VStack(spacing: 8) {
             Image(systemName: "clock.arrow.circlepath")
-                .font(.system(size: 28, weight: .light))
+                .font(.system(size: 30, weight: .light))
                 .foregroundStyle(.tertiary)
             Text("No chats yet")
-                .font(.system(size: 14, weight: .semibold))
+                .font(.system(size: 16, weight: .semibold))
             Text("Ask something and it'll be here to come back to.")
-                .font(.system(size: 12))
+                .font(.system(size: 13))
                 .foregroundStyle(.secondary)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .padding(.top, topInset)
     }
 
     // MARK: - Grouping
@@ -133,12 +151,12 @@ private struct HistoryRow: View {
         Button(action: onOpen) {
             HStack(spacing: 10) {
                 Image(systemName: ProviderKind(rawValue: summary.provider)?.icon ?? "text.bubble")
-                    .font(.system(size: 12, weight: .medium))
+                    .font(.system(size: 13, weight: .medium))
                     .foregroundStyle(.secondary)
                     .frame(width: 18)
 
                 Text(summary.title)
-                    .font(.system(size: 13.5))
+                    .font(.system(size: 14.5))
                     .lineLimit(1)
                     .truncationMode(.tail)
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -160,12 +178,12 @@ private struct HistoryRow: View {
                 }
             }
             .padding(.horizontal, 12)
-            .frame(height: 34)
+            .frame(height: 38)
             .background(
-                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
                     .fill(background)
             )
-            .contentShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+            .contentShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
         }
         .buttonStyle(.plain)
         .onHover { hovering = $0 }
@@ -180,7 +198,7 @@ private struct HistoryRow: View {
     }
 
     private var background: Color {
-        if isSelected { return settings.accent.color.opacity(0.18) }
+        if isSelected { return Color.accentColor.opacity(0.18) }
         return Color.primary.opacity(hovering ? 0.07 : 0)
     }
 

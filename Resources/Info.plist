@@ -4,37 +4,37 @@
 <dict>
 	<key>CFBundleDevelopmentRegion</key>
 	<string>en</string>
-	<key>CFBundleName</key>
-	<string>Flyby</string>
 	<key>CFBundleDisplayName</key>
 	<string>Flyby</string>
 	<key>CFBundleExecutable</key>
 	<string>Flyby</string>
-	<key>CFBundleIdentifier</key>
-	<string>com.fringecore.flyby</string>
 	<key>CFBundleIconFile</key>
 	<string>AppIcon</string>
 	<key>CFBundleIconName</key>
 	<string>AppIcon</string>
+	<key>CFBundleIdentifier</key>
+	<string>com.fringecore.flyby</string>
 	<key>CFBundleInfoDictionaryVersion</key>
 	<string>6.0</string>
+	<key>CFBundleName</key>
+	<string>Flyby</string>
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
-	<key>CFBundleSignature</key>
-	<string>????</string>
 	<key>CFBundleShortVersionString</key>
 	<string>0.3.0</string>
+	<key>CFBundleSignature</key>
+	<string>????</string>
 	<key>CFBundleVersion</key>
 	<string>3</string>
 	<key>LSApplicationCategoryType</key>
 	<string>public.app-category.utilities</string>
-	<key>NSHumanReadableCopyright</key>
-	<string>Copyright © 2026 fringecore. All rights reserved.</string>
 	<key>LSMinimumSystemVersion</key>
-	<string>14.0</string>
-	<key>NSHighResolutionCapable</key>
-	<true/>
+	<string>27.0</string>
 	<key>LSUIElement</key>
 	<true/>
+	<key>NSHighResolutionCapable</key>
+	<true/>
+	<key>NSHumanReadableCopyright</key>
+	<string>Copyright © 2026 fringecore. All rights reserved.</string>
 </dict>
 </plist>

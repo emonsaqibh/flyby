@@ -107,9 +107,17 @@ final class AIModeEngine: ObservableObject {
         // engine weakly, so this doesn't keep the engine alive.
         content.add(bridge, contentWorld: AIModeEngine.contentWorld, name: AIModeEngine.messageHandlerName)
 
-        // A real size before the panel ever mounts it: Google lays the page
-        // out responsively, and a zero-width page is not what users get.
-        webView = WKWebView(frame: NSRect(x: 0, y: 0, width: 480, height: 800), configuration: config)
+        // The size it'll have in the card, before the card ever mounts it:
+        // Google lays the page out responsively, and a zero-width page is not
+        // what users get.
+        webView = WKWebView(
+            frame: NSRect(
+                x: 0, y: 0,
+                width: CardMetrics.width - CardMetrics.edgeInset * 2,
+                height: CardMetrics.maxHeight - CardMetrics.headerInset - CardMetrics.footerInset
+            ),
+            configuration: config
+        )
         bridge.engine = self
         webView.navigationDelegate = bridge
         webView.uiDelegate = bridge
@@ -118,11 +126,10 @@ final class AIModeEngine: ObservableObject {
         #endif
 
         // Google honours prefers-color-scheme, which WebKit takes from the
-        // view's appearance — so this makes the page follow the app's theme.
-        webView.appearance = AppSettings.shared.appearance.nsAppearance
-        AppSettings.shared.$appearance
-            .sink { [weak self] mode in self?.webView.appearance = mode.nsAppearance }
-            .store(in: &settingsObservers)
+        // view's appearance. Set here rather than inherited from the card,
+        // because the page loads — prewarmed, or searching — before it's ever
+        // mounted there; the card is always dark, and so is the page.
+        webView.appearance = NSAppearance(named: .darkAqua)
         // @Published emits before the stored value changes, so pass it along.
         AppSettings.shared.$readerMode
             .dropFirst()

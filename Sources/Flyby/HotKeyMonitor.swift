@@ -295,7 +295,7 @@ final class HotKeyMonitor {
             fire()
         } else {
             // Re-arm only once the chord is released, so holding the keys down
-            // doesn't machine-gun the pill open.
+            // doesn't machine-gun Flyby open.
             armed = true
         }
     }

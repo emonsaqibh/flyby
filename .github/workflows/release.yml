@@ -8,7 +8,7 @@ name: Release
 #       git tag -a v0.3.0-beta.1 -m "Flyby 0.3.0-beta.1" && git push origin v0.3.0-beta.1
 #
 # The same thing ./release.sh + ./publish.sh do on a Mac, done on GitHub's
-# macOS runner instead: test, build the universal release flavor, zip it with
+# macOS runner instead: test, build the release flavor, zip it with
 # ditto, and create the GitHub release with Flyby.zip attached — a pre-release
 # for x.y.z-suffix tags, the repo's Latest for plain x.y.z. Notes come from
 # docs/releases/<version>.md when that file exists.
@@ -31,7 +31,8 @@ concurrency:
 jobs:
   release:
     name: Build & publish
-    runs-on: macos-26
+    # macOS 27 and Xcode 27, same as CI: the tests only run on macOS 27.
+    runs-on: xcode-27
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
@@ -64,16 +65,18 @@ jobs:
           XCODE=$(ls -d /Applications/Xcode_*.app | grep -viE 'beta|release_candidate|_rc' | sort -V | tail -1)
           sudo xcode-select -s "$XCODE"
           xcodebuild -version
+          SDK=$(xcrun --show-sdk-version); OS=$(sw_vers -productVersion)
+          [[ "${SDK%%.*}" -ge 27 && "${OS%%.*}" -ge 27 ]] || { echo "::error::needs Xcode 27 on macOS 27 (SDK $SDK, macOS $OS)"; exit 1; }
 
       - name: Test
         run: swift test
 
-      - name: Build Flyby ${{ steps.version.outputs.version }} (universal)
+      - name: Build Flyby ${{ steps.version.outputs.version }}
         run: FLAVOR=release VERSION="${{ steps.version.outputs.version }}" ./build.sh
 
       - name: Check the build
         run: |
-          lipo -archs build/Flyby.app/Contents/MacOS/Flyby | grep -q 'x86_64 arm64\|arm64 x86_64'
+          test "$(lipo -archs build/Flyby.app/Contents/MacOS/Flyby)" = arm64
           test "$(/usr/libexec/PlistBuddy -c 'Print CFBundleIdentifier' build/Flyby.app/Contents/Info.plist)" = com.fringecore.flyby
           test "$(/usr/libexec/PlistBuddy -c 'Print CFBundleShortVersionString' build/Flyby.app/Contents/Info.plist)" = "${{ steps.version.outputs.version }}"
           codesign --verify --strict build/Flyby.app

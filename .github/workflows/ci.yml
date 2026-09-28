@@ -15,14 +15,16 @@ concurrency:
 
 jobs:
   build:
-    name: Build & test (macOS)
-    runs-on: macos-26
+    name: Build & test (macOS 27)
+    # Flyby targets macOS 27, so it needs Xcode 27 to build and a macOS 27
+    # host to run its tests on.
+    runs-on: xcode-27
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
 
-      # Liquid Glass needs the macOS 26 SDK or newer, so pick the newest
-      # release Xcode on the image rather than whatever the default is.
+      # The newest release Xcode on the image rather than whatever the
+      # default is, and it has to have the macOS 27 SDK.
       - name: Select Xcode
         run: |
           ls -d /Applications/Xcode*.app || true
@@ -30,8 +32,12 @@ jobs:
           echo "Using $XCODE"
           sudo xcode-select -s "$XCODE"
           xcodebuild -version
-          xcrun --show-sdk-version
+          SDK=$(xcrun --show-sdk-version)
           swift --version
+          sw_vers
+          [[ "${SDK%%.*}" -ge 27 ]] || { echo "::error::Flyby needs the macOS 27 SDK; $XCODE has $SDK"; exit 1; }
+          OS=$(sw_vers -productVersion)
+          [[ "${OS%%.*}" -ge 27 ]] || { echo "::error::the tests need a macOS 27 host; this runner is macOS $OS"; exit 1; }
 
       - name: Build (debug)
         run: swift build
@@ -43,13 +49,15 @@ jobs:
       - name: Build dev app (Flyby Dev)
         run: ./build.sh
 
-      # The release flavor, universal, exactly as release.sh builds it — so a
-      # release can't be the first time that configuration ever compiles.
-      - name: Build release app (Flyby, universal)
+      # The release flavor, exactly as release.sh builds it — so a release
+      # can't be the first time that configuration ever compiles.
+      - name: Build release app (Flyby)
         run: FLAVOR=release VERSION="0.0.0-ci.${{ github.run_number }}" ./build.sh
 
-      - name: Check the release binary is universal
-        run: lipo -archs build/Flyby.app/Contents/MacOS/Flyby | grep -q 'x86_64 arm64\|arm64 x86_64'
+      - name: Check the release binary is Apple silicon, for macOS 27
+        run: |
+          test "$(lipo -archs build/Flyby.app/Contents/MacOS/Flyby)" = arm64
+          otool -l build/Flyby.app/Contents/MacOS/Flyby | grep -A4 LC_BUILD_VERSION | grep -q 'minos 27'
 
       # upload-artifact drops POSIX permissions, which leaves an app whose
       # executable won't run. ditto keeps them (and the signature) intact.
@@ -71,23 +79,3 @@ jobs:
           name: Flyby-release-ci
           path: build/Flyby.zip
           if-no-files-found: error
-
-  # macOS 27 SDK, on GitHub's preview image. Informational until the image is
-  # GA: it catches deprecations and SDK breakage early without blocking merges.
-  build-xcode27:
-    name: Build & test (Xcode 27 preview)
-    runs-on: xcode-27
-    continue-on-error: true
-    timeout-minutes: 30
-    steps:
-      - uses: actions/checkout@v4
-      - name: Toolchain
-        run: |
-          xcodebuild -version
-          xcrun --show-sdk-version
-          swift --version
-      - name: Build (debug)
-        run: swift build
-      - name: Test
-        if: hashFiles('Tests/**/*.swift') != ''
-        run: swift test

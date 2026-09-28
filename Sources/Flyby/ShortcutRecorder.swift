@@ -32,6 +32,8 @@ struct ShortcutRecorder: View {
     /// Why the last attempt was refused, shown under the field.
     @State private var hint: String?
 
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
     /// More forgiving than the live 0.35 s window — while recording, the user
     /// is thinking about the gesture, not performing it.
     private static let doubleTapWindow: TimeInterval = 0.45
@@ -42,46 +44,19 @@ struct ShortcutRecorder: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            HStack(spacing: 8) {
-                Button {
-                    setRecording(!isRecording)
-                } label: {
-                    Text(label)
-                        .font(.system(size: 13, weight: .medium, design: .rounded))
-                        .lineLimit(1)
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 6)
-                        .background(
-                            RoundedRectangle(cornerRadius: 7)
-                                .fill(isRecording ? Color.accentColor.opacity(0.18) : Color.primary.opacity(0.07))
-                        )
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 7)
-                                .strokeBorder(isRecording ? Color.accentColor : Color.clear, lineWidth: 1.5)
-                        )
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-
-                if isRecording {
-                    Button("Cancel") { setRecording(false) }
-                        .buttonStyle(.link)
-                        .font(.caption)
-                } else if shortcut != .default {
-                    Button("Reset") { shortcut = .default }
-                        .buttonStyle(.link)
-                        .font(.caption)
-                }
-            }
+        VStack(alignment: .leading, spacing: 6) {
+            field
 
             if isRecording, let hint {
                 Text(hint)
                     .font(.caption)
                     .foregroundStyle(.orange)
                     .fixedSize(horizontal: false, vertical: true)
+                    .transition(.opacity)
             }
         }
+        .animation(reduceMotion ? nil : .smooth(duration: 0.25), value: isRecording)
+        .animation(.smooth(duration: 0.2), value: hint)
         .background(
             KeyCaptureView(
                 isRecording: isRecording,
@@ -91,7 +66,82 @@ struct ShortcutRecorder: View {
             )
             .frame(width: 0, height: 0)
         )
+        .onAppear(perform: startRecordingIfDebugging)
         .onDisappear { setRecording(false) }
+    }
+
+    /// A field-shaped control, like the shortcut fields in System Settings:
+    /// the shortcut in the middle, a keyboard glyph that picks up a pulsing
+    /// ellipsis while listening, and — like a search field's clear button —
+    /// Reset or Cancel tucked inside the trailing edge.
+    private var field: some View {
+        let shape = RoundedRectangle(cornerRadius: 8, style: .continuous)
+        return HStack(spacing: 6) {
+            Button {
+                setRecording(!isRecording)
+            } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: isRecording ? "keyboard.badge.ellipsis" : "keyboard")
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(isRecording ? AnyShapeStyle(.tint) : AnyShapeStyle(.secondary))
+                        .contentTransition(.symbolEffect(.replace))
+                        .symbolEffect(.pulse, isActive: isRecording && !reduceMotion)
+                        .frame(width: 16)
+
+                    Text(label)
+                        .font(.system(size: 13, weight: isRecording ? .regular : .medium))
+                        .foregroundStyle(isRecording ? .secondary : .primary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                        .frame(maxWidth: .infinity)
+                        .contentTransition(.opacity)
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(isRecording ? "Recording a new shortcut" : "Shortcut, \(shortcut.voiceOverDescription)")
+            .accessibilityHint(isRecording ? "Press the new shortcut, or Escape to cancel." : "Records a new shortcut.")
+
+            trailingButton
+                .frame(width: 16, height: 16)
+        }
+        .padding(.horizontal, 8)
+        .frame(height: 28)
+        .background(shape.fill(isRecording ? AnyShapeStyle(Color.accentColor.opacity(0.12)) : AnyShapeStyle(.fill.tertiary)))
+        .overlay(
+            shape.strokeBorder(
+                isRecording ? AnyShapeStyle(Color.accentColor) : AnyShapeStyle(.separator),
+                lineWidth: isRecording ? 1.5 : 0.5
+            )
+        )
+    }
+
+    /// Cancel while listening; Reset once there's something to reset. The
+    /// slot stays reserved either way, so the label doesn't jump sideways.
+    @ViewBuilder
+    private var trailingButton: some View {
+        if isRecording {
+            fieldButton("xmark.circle.fill", help: "Cancel") { setRecording(false) }
+        } else if shortcut != .default {
+            fieldButton("arrow.counterclockwise.circle.fill", help: "Reset to \(Shortcut.default.voiceOverDescription)") {
+                shortcut = .default
+            }
+        } else {
+            Color.clear
+        }
+    }
+
+    private func fieldButton(_ symbol: String, help: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: symbol)
+                .font(.system(size: 13))
+                .symbolRenderingMode(.hierarchical)
+                .foregroundStyle(.secondary)
+        }
+        .buttonStyle(.plain)
+        .help(help)
+        .accessibilityLabel(help)
+        .transition(.opacity)
     }
 
     private var label: String {
@@ -100,11 +150,19 @@ struct ShortcutRecorder: View {
                 return Shortcut.modifierChord(heldModifiers).displayString + " …"
             }
             if let pendingTap {
-                return "Tap \(pendingTap.symbol) again for a double-tap…"
+                return "Tap \(pendingTap.symbol) again…"
             }
             return "Press a shortcut…"
         }
         return shortcut.displayString
+    }
+
+    /// Dev builds only: `-FlybyDebugRecording 1` opens the recorder already
+    /// listening, so its recording state can be looked at (and screenshotted)
+    /// without clicking.
+    private func startRecordingIfDebugging() {
+        guard BuildFlavor.isDev, UserDefaults.standard.bool(forKey: "FlybyDebugRecording") else { return }
+        setRecording(true)
     }
 
     /// Idempotent, so every exit path can call it without double-reporting.
@@ -192,7 +250,7 @@ struct ShortcutRecorder: View {
 /// is made of.
 ///
 /// The monitor is app-wide by nature, so it only acts on events addressed to
-/// the recorder's own window — anything else, like typing in the pill while
+/// the recorder's own window — anything else, like typing in Flyby while
 /// Settings is recording, passes through untouched.
 private struct KeyCaptureView: NSViewRepresentable {
     let isRecording: Bool

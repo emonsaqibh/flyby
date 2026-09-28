@@ -2,15 +2,22 @@ import SwiftUI
 import AppKit
 import Combine
 
-/// The first-launch walkthrough: greet, style, pick a provider (and connect
+/// The first-launch walkthrough: greet, pick a provider (and connect
 /// Google, if that provider is AI Mode), record the trigger, clear the
 /// Accessibility gate if the trigger needs it, then prove the whole thing
 /// works by actually firing it once.
+///
+/// One step at a time on a glowing aura, with very little text: a headline
+/// that writes itself in, a line under it, and one thing to do. The steps
+/// themselves live in Onboarding/; this view owns where the user is, how
+/// they move, and the chrome around it.
 struct OnboardingView: View {
     /// In the order they're shown. Which ones are shown is `visibleSteps`.
     enum Step: Int, CaseIterable {
-        case welcome, appearance, provider, google, hotkey, accessibility, practice, done
+        case welcome, provider, google, hotkey, accessibility, practice, done
     }
+
+    static let size = CGSize(width: 760, height: 540)
 
     @ObservedObject private var settings = AppSettings.shared
     @ObservedObject private var google = GoogleSession.shared
@@ -18,67 +25,69 @@ struct OnboardingView: View {
     let onRecordingChanged: (Bool) -> Void
     let onFinished: () -> Void
 
-    @State private var step: Step = .welcome
-    @State private var goingForward = true
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    @State private var step: Step
+    @State private var direction: OnboardingDirection = .forward
     @State private var axTrusted = HotKeyMonitor.isTrusted
     @State private var practiceSucceeded = false
+    /// When the practice shortcut last fired, for the aura's burst of light.
+    @State private var celebratedAt: Date?
+    /// The footer and progress arrive after the welcome does, so the first
+    /// thing on screen is the product, not the controls.
+    @State private var chromeShown = false
+    /// Permission landed, and the step is holding a beat to show it before
+    /// moving on.
+    @State private var leavingAccessibility = false
+    /// Dev builds: stands in for a real grant (`OnboardingDebug`).
+    @State private var debugTrusted = false
 
     private let axPoll = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
 
+    init(onRecordingChanged: @escaping (Bool) -> Void, onFinished: @escaping () -> Void) {
+        self.onRecordingChanged = onRecordingChanged
+        self.onFinished = onFinished
+        _step = State(initialValue: OnboardingDebug.initialStep ?? .welcome)
+    }
+
     var body: some View {
-        VStack(spacing: 0) {
-            ZStack {
+        ZStack {
+            OnboardingAura(phase: auraPhase, glow: auraGlow, burstDate: celebratedAt)
+                .animation(reduceMotion ? .easeInOut(duration: 0.4) : .smooth(duration: 1.8), value: step)
+                .animation(.smooth(duration: 1.4), value: practiceSucceeded)
+
+            // Every step hangs from the same line, so headlines don't jump
+            // between steps — or within one, when a choice grows the page.
+            ZStack(alignment: .top) {
                 stepContent
-                    .padding(.horizontal, 48)
-                    .padding(.top, 36)
                     .id(step)
-                    .transition(.asymmetric(
-                        insertion: .move(edge: goingForward ? .trailing : .leading)
-                            .combined(with: .opacity),
-                        removal: .move(edge: goingForward ? .leading : .trailing)
-                            .combined(with: .opacity)
+                    .transition(AsymmetricTransition(
+                        insertion: IdentityTransition(),
+                        removal: StepExitTransition(reduceMotion: reduceMotion)
                     ))
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-            .clipped()
+            .padding(.top, 80)
+            .padding(.bottom, 84)
+            .environment(\.onboardingDirection, direction)
 
-            footer
-                .padding(.horizontal, 28)
-                .padding(.vertical, 20)
+            chrome
         }
-        .frame(width: 580, height: 560)
-        .background(backdrop)
-        .themed()
-        .onReceive(axPoll) { _ in
-            axTrusted = HotKeyMonitor.isTrusted
-            // The moment permission lands, the gate step has done its job.
-            if step == .accessibility, axTrusted {
-                advance()
-            }
-        }
+        .frame(width: Self.size.width, height: Self.size.height)
+        .ignoresSafeArea()
+        .onReceive(axPoll) { _ in pollAccessibility() }
         .onReceive(NotificationCenter.default.publisher(for: .flybyDidTriggerShortcut)) { _ in
-            if step == .practice {
-                withAnimation(.spring(duration: 0.4)) { practiceSucceeded = true }
-            }
+            if step == .practice, !practiceSucceeded { celebrate() }
         }
         // Firing the old shortcut proves nothing about a new one.
         .onChange(of: settings.shortcut) { _, _ in
             practiceSucceeded = false
         }
-    }
-
-    /// A whisper of the icon's sky gradient behind everything, so the window
-    /// reads as Flyby's rather than a generic form.
-    private var backdrop: some View {
-        ZStack {
-            Rectangle().fill(.background)
-            LinearGradient(
-                colors: [settings.accent.color.opacity(0.14), .clear],
-                startPoint: .top,
-                endPoint: .init(x: 0.5, y: 0.55)
-            )
+        .onAppear {
+            withAnimation(.smooth(duration: 0.6).delay(step == .welcome ? 1.0 : 0.3)) { chromeShown = true }
         }
-        .ignoresSafeArea()
+        .task { await autoplayIfAsked() }
+        .task(id: step) { await debugStepHooks() }
     }
 
     // MARK: - Steps
@@ -86,341 +95,106 @@ struct OnboardingView: View {
     @ViewBuilder
     private var stepContent: some View {
         switch step {
-        case .welcome:       welcome
-        case .appearance:    appearance
-        case .provider:      provider
-        case .google:        googleStep
-        case .hotkey:        hotkey
-        case .accessibility: accessibility
-        case .practice:      practice
-        case .done:          done
+        case .welcome:
+            WelcomeStep()
+        case .provider:
+            ProviderStep(settings: settings)
+        case .google:
+            GoogleStep()
+        case .hotkey:
+            ShortcutStep(settings: settings, onRecordingChanged: onRecordingChanged)
+        case .accessibility:
+            AccessibilityStep(isTrusted: axTrusted)
+        case .practice:
+            PracticeStep(shortcut: settings.shortcut, succeeded: practiceSucceeded)
+        case .done:
+            DoneStep(settings: settings)
         }
     }
 
-    private var welcome: some View {
-        VStack(spacing: 14) {
-            Image(nsImage: NSApp.applicationIconImage)
-                .resizable()
-                .frame(width: 118, height: 118)
-                .shadow(color: .black.opacity(0.25), radius: 14, y: 8)
-                .padding(.top, 26)
-                .accessibilityHidden(true)
-
-            Text("Welcome to Flyby")
-                .font(.system(size: 30, weight: .bold, design: .rounded))
-                .accessibilityAddTraits(.isHeader)
-
-            Text("Search from anywhere on your Mac with one gesture —\na quick pill that appears, answers, and gets out of the way.")
-                .font(.system(size: 14))
-                .foregroundStyle(.secondary)
-                .multilineTextAlignment(.center)
-
-            Text("The next few steps take about a minute.")
-                .font(.system(size: 12))
-                .foregroundStyle(.tertiary)
-                .padding(.top, 10)
+    /// Where each step parks the aura's light. Uneven steps, so no two
+    /// neighbours look alike.
+    private var auraPhase: Double {
+        switch step {
+        case .welcome:       return 0
+        case .provider:      return 1.4
+        case .google:        return 2.1
+        case .hotkey:        return 3.0
+        case .accessibility: return 3.7
+        case .practice:      return 4.5
+        case .done:          return 5.6
         }
     }
 
-    private var appearance: some View {
-        VStack(spacing: 18) {
-            header(
-                symbol: "paintbrush.pointed.fill",
-                title: "Make it yours",
-                subtitle: "All of this can be changed later in Settings."
-            )
-
-            card {
-                Picker("Appearance", selection: $settings.appearance) {
-                    ForEach(AppearanceMode.allCases) { Text($0.label).tag($0) }
-                }
-                .pickerStyle(.segmented)
-
-                Divider()
-
-                LabeledContent("Accent") {
-                    AccentSwatches(selection: $settings.accent, diameter: 20)
-                }
-            }
+    /// A little more light once it works, and at the end.
+    private var auraGlow: Double {
+        switch step {
+        case .practice where practiceSucceeded: return 0.3
+        case .done:                             return 0.3
+        default:                                return 0
         }
     }
 
-    private var provider: some View {
-        VStack(spacing: 18) {
-            header(
-                symbol: "sparkle.magnifyingglass",
-                title: "Where should answers come from?",
-                subtitle: "Flyby can hand off to your browser or answer inline."
-            )
+    // MARK: - Chrome
 
-            card {
-                ForEach(ProviderKind.allCases) { kind in
-                    providerRow(kind)
-                    if kind != ProviderKind.allCases.last { Divider() }
-                }
-            }
+    private var chrome: some View {
+        VStack(spacing: 0) {
+            // Level with the traffic lights, in the titlebar's own band.
+            ProgressCapsules(count: visibleSteps.count, current: visibleSteps.firstIndex(of: step) ?? 0)
+                .padding(.top, 12)
 
-            card {
-                Picker("Search engine", selection: $settings.engine) {
-                    ForEach(SearchEngine.allCases) { Text($0.label).tag($0) }
-                }
-                Text("Used for browser searches, including ⌘Return from anywhere.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+            Spacer(minLength: 0)
 
-                if settings.provider == .gemini {
-                    Divider()
-                    SecureField("Gemini API key", text: $settings.geminiKey)
-                        .textFieldStyle(.roundedBorder)
-                    Link("Get a free key from Google AI Studio",
-                         destination: URL(string: "https://aistudio.google.com/apikey")!)
-                        .font(.caption)
-                }
-            }
-        }
-    }
-
-    /// Only for AI Mode, and skippable: AI Mode works without an account, it
-    /// just gets quizzed more. Scrolls, because a problem row and its fix can
-    /// make the card taller than the window.
-    private var googleStep: some View {
-        VStack(spacing: 18) {
-            header(
-                symbol: "person.crop.circle.badge.checkmark",
-                title: "Connect your Google account",
-                subtitle: "AI Mode runs in your own Google session, so Google treats\nFlyby like your browser — and rarely asks if you're human."
-            )
-
-            ScrollView {
-                card {
-                    GoogleConnectView(layout: .card)
-                }
-                .padding(.bottom, 8)
-            }
-        }
-    }
-
-    private var hotkey: some View {
-        VStack(spacing: 18) {
-            header(
-                symbol: "keyboard.fill",
-                title: "Your summon gesture",
-                subtitle: "Double-tap Right ⌥ is the default — or record your own."
-            )
-
-            card {
-                LabeledContent("Shortcut") {
-                    ShortcutRecorder(
-                        shortcut: $settings.shortcut,
-                        onRecordingChanged: onRecordingChanged
-                    )
-                    .frame(maxWidth: 260)
-                }
-                Text(settings.shortcut.explanation)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-
-            Text("Key combos like ⌥Space work with no permissions at all.\nModifier-only gestures — double-taps and chords — need one Accessibility approval, coming up next.")
-                .font(.caption)
-                .foregroundStyle(.tertiary)
-                .multilineTextAlignment(.center)
-        }
-    }
-
-    private var accessibility: some View {
-        VStack(spacing: 18) {
-            header(
-                symbol: "lock.shield.fill",
-                title: "One permission to grant",
-                subtitle: "macOS only delivers modifier-only gestures to apps\nyou've approved under Accessibility."
-            )
-
-            card {
-                if axTrusted {
-                    Label("Permission granted — your shortcut is live.", systemImage: "checkmark.circle.fill")
-                        .foregroundStyle(.green)
-                } else {
-                    HStack(spacing: 10) {
-                        ProgressView().controlSize(.small)
-                        Text("Waiting for approval — this step moves on by itself the moment you flip the switch.")
-                            .font(.callout)
-                            .foregroundStyle(.secondary)
-                    }
-                    Button("Open Accessibility Settings") {
-                        HotKeyMonitor.ensureAccessibilityPermission()
-                        HotKeyMonitor.openAccessibilitySettings()
-                    }
-                    .controlSize(.large)
-                    .flybyGlassButton(prominent: true)
-                }
-            }
-
-            Text("Look for “Flyby” in the list and turn it on.\nFlyby only listens for your shortcut — nothing you type is recorded.")
-                .font(.caption)
-                .foregroundStyle(.tertiary)
-                .multilineTextAlignment(.center)
-        }
-    }
-
-    private var practice: some View {
-        VStack(spacing: 18) {
-            header(
-                symbol: practiceSucceeded ? "checkmark.seal.fill" : "hands.and.sparkles.fill",
-                title: practiceSucceeded ? "You've got it!" : "Try it now",
-                subtitle: practiceSucceeded
-                    ? "That's the whole trick. Flyby is ready whenever you are."
-                    : "Fire your shortcut and watch the pill appear."
-            )
-
-            Text(settings.shortcut.displayString)
-                .font(.system(size: 34, weight: .bold, design: .rounded))
+            footer
                 .padding(.horizontal, 28)
-                .padding(.vertical, 14)
-                .background(
-                    RoundedRectangle(cornerRadius: 16)
-                        .fill(practiceSucceeded ? Color.green.opacity(0.15) : Color.primary.opacity(0.06))
-                )
-                .overlay(
-                    RoundedRectangle(cornerRadius: 16)
-                        .strokeBorder(
-                            practiceSucceeded ? Color.green.opacity(0.6) : Color.primary.opacity(0.1),
-                            lineWidth: 1.5
-                        )
-                )
-                .scaleEffect(practiceSucceeded ? 1.05 : 1)
-                .accessibilityLabel("Your shortcut: \(settings.shortcut.displayString)")
-
-            Text(practiceSucceeded
-                 ? "Press Esc or click anywhere to put the pill away."
-                 : settings.shortcut.explanation)
-                .font(.caption)
-                .foregroundStyle(.secondary)
+                .padding(.bottom, 26)
         }
-    }
-
-    private var done: some View {
-        VStack(spacing: 16) {
-            header(
-                symbol: "checkmark.circle.fill",
-                title: "You're all set",
-                subtitle: "Flyby lives in your menu bar — look for the magnifying glass.\nSettings… is always one click away there."
-            )
-
-            card {
-                Toggle("Open Flyby at login", isOn: $settings.launchAtLogin)
-                if let error = settings.loginItemError {
-                    Label(error, systemImage: "exclamationmark.triangle")
-                        .font(.caption)
-                        .foregroundStyle(.orange)
-                } else if let status = LoginItem.statusDescription {
-                    Label(status, systemImage: "info.circle")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                } else {
-                    Text("Recommended, so your shortcut works from the moment you sign in.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-            }
-        }
-    }
-
-    // MARK: - Pieces
-
-    private func header(symbol: String, title: String, subtitle: String) -> some View {
-        VStack(spacing: 10) {
-            Image(systemName: symbol)
-                .font(.system(size: 40, weight: .medium))
-                .foregroundStyle(settings.accent.color)
-                .frame(height: 52)
-                .padding(.top, 8)
-                .accessibilityHidden(true)
-
-            Text(title)
-                .font(.system(size: 24, weight: .bold, design: .rounded))
-                .accessibilityAddTraits(.isHeader)
-
-            Text(subtitle)
-                .font(.system(size: 13))
-                .foregroundStyle(.secondary)
-                .multilineTextAlignment(.center)
-        }
-    }
-
-    private func card<Content: View>(@ViewBuilder _ content: () -> Content) -> some View {
-        VStack(alignment: .leading, spacing: 12) {
-            content()
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(16)
-        .background(
-            RoundedRectangle(cornerRadius: 14)
-                .fill(Color.primary.opacity(0.045))
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 14)
-                .strokeBorder(Color.primary.opacity(0.08), lineWidth: 1)
-        )
-    }
-
-    private func providerRow(_ kind: ProviderKind) -> some View {
-        let isSelected = settings.provider == kind
-        return Button {
-            settings.provider = kind
-        } label: {
-            HStack(spacing: 12) {
-                Image(systemName: kind.icon)
-                    .font(.system(size: 17))
-                    .foregroundStyle(isSelected ? settings.accent.color : .secondary)
-                    .frame(width: 26)
-                    .accessibilityHidden(true)
-
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(kind.label).font(.system(size: 13, weight: .semibold))
-                    Text(kind.detail).font(.caption).foregroundStyle(.secondary)
-                }
-
-                Spacer()
-
-                Image(systemName: "checkmark.circle.fill")
-                    .foregroundStyle(settings.accent.color)
-                    .opacity(isSelected ? 1 : 0)
-                    .accessibilityHidden(true)
-            }
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel(kind.label)
-        .accessibilityValue(kind.detail)
-        .accessibilityAddTraits(isSelected ? .isSelected : [])
+        .opacity(chromeShown ? 1 : 0)
+        .background { closeShortcut }
     }
 
     private var footer: some View {
-        HStack {
-            if step != .welcome, step != .done {
-                Button("Back") { retreat() }
-                    .buttonStyle(.plain)
-                    .foregroundStyle(.secondary)
-            }
-
-            Spacer()
-
-            progressDots
-
-            Spacer()
-
-            Button(continueTitle) {
-                if step == .done {
-                    onFinished()
-                } else {
-                    advance()
+        ZStack {
+            HStack {
+                if showsBack {
+                    Button(action: retreat) {
+                        Label("Back", systemImage: "chevron.left")
+                            .labelStyle(.titleAndIcon)
+                    }
+                    .buttonStyle(.glass)
+                    .controlSize(.large)
+                    .transition(SoftSwapTransition())
                 }
+                Spacer()
             }
-            .controlSize(.large)
-            .flybyGlassButton(prominent: true)
+
+            Button(action: primaryAction) {
+                Text(continueTitle)
+                    .contentTransition(.interpolate)
+                    .frame(minWidth: 170)
+            }
+            .buttonStyle(.glassProminent)
+            .controlSize(.extraLarge)
             .keyboardShortcut(.defaultAction)
         }
+        .animation(.smooth(duration: 0.3), value: showsBack)
+        .animation(.smooth(duration: 0.3), value: continueTitle)
+    }
+
+    /// ⌘W, as in any other window. The app's minimal main menu has no Close
+    /// item to carry it, so a button nobody sees does.
+    private var closeShortcut: some View {
+        Button("Close Window") {
+            NSApp.keyWindow?.performClose(nil)
+        }
+        .keyboardShortcut("w", modifiers: .command)
+        .opacity(0)
+        .frame(width: 0, height: 0)
+        .accessibilityHidden(true)
+    }
+
+    private var showsBack: Bool {
+        step != .welcome && step != .done
     }
 
     /// The gates advance themselves or are optional; on those the button is
@@ -437,14 +211,14 @@ struct OnboardingView: View {
     }
 
     /// The steps this user will actually walk through, in order. Drives both
-    /// navigation and the progress dots, so the dots never promise a step
-    /// that won't come.
+    /// navigation and the progress capsules, so progress never promises a
+    /// step that won't come.
     ///
     /// The Accessibility gate stays in the list while it's on screen even
-    /// once permission lands, so its dot doesn't vanish under the user in the
-    /// moment before the step moves itself on.
+    /// once permission lands, so its capsule doesn't vanish under the user in
+    /// the moment before the step moves itself on.
     private var visibleSteps: [Step] {
-        var steps: [Step] = [.welcome, .appearance, .provider]
+        var steps: [Step] = [.welcome, .provider]
         if settings.provider == .aiMode { steps.append(.google) }
         steps.append(.hotkey)
         if shapeNeedsAccessibility, !axTrusted || step == .accessibility {
@@ -454,22 +228,6 @@ struct OnboardingView: View {
         return steps
     }
 
-    private var progressDots: some View {
-        let steps = visibleSteps
-        let current = steps.firstIndex(of: step) ?? 0
-        return HStack(spacing: 7) {
-            ForEach(steps, id: \.self) { s in
-                Circle()
-                    .fill(s == step ? settings.accent.color : Color.primary.opacity(0.15))
-                    .frame(width: 7, height: 7)
-            }
-        }
-        .animation(.easeOut(duration: 0.2), value: steps)
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel("Progress")
-        .accessibilityValue("Step \(current + 1) of \(steps.count)")
-    }
-
     private var shapeNeedsAccessibility: Bool {
         if case .keyCombo = settings.shortcut { return false }
         return true
@@ -477,34 +235,92 @@ struct OnboardingView: View {
 
     // MARK: - Navigation
 
+    private func primaryAction() {
+        if step == .done {
+            onFinished()
+        } else {
+            advance()
+        }
+    }
+
     private func advance() {
         // Read fresh rather than trusting the last poll: permission granted in
         // the last second shouldn't route through the gate.
-        axTrusted = HotKeyMonitor.isTrusted
+        axTrusted = isTrusted
         guard let next = visibleSteps.first(where: { $0.rawValue > step.rawValue }) else { return }
-        go(to: next, forward: true)
+        go(to: next, direction: .forward)
     }
 
     private func retreat() {
         guard let previous = visibleSteps.last(where: { $0.rawValue < step.rawValue }) else { return }
-        go(to: previous, forward: false)
+        go(to: previous, direction: .backward)
     }
 
-    /// A removed view leaves with the transition it was last drawn with. So
-    /// when the direction flips — the first Back after a Forward — the page on
-    /// screen still holds the old exit edge, and changing direction and page
-    /// together sends it off the wrong side. On a flip, re-draw it with the new
-    /// direction first, then change page a beat later.
-    private func go(to target: Step, forward: Bool) {
-        let animation = Animation.spring(duration: 0.45)
-        guard goingForward != forward else {
-            withAnimation(animation) { step = target }
-            return
+    /// The outgoing page leaves the same way whichever way the user is going,
+    /// so direction only matters to what arrives — and that reads it as it's
+    /// created. Nothing waits on anything, so clicks can come as fast as
+    /// they like: every page just starts arriving or leaving.
+    private func go(to target: Step, direction: OnboardingDirection) {
+        self.direction = direction
+        withAnimation(reduceMotion ? .easeInOut(duration: 0.2) : .smooth(duration: 0.26)) {
+            step = target
         }
-        withAnimation(animation) { goingForward = forward }
+    }
+
+    // MARK: - Accessibility gate
+
+    private var isTrusted: Bool {
+        HotKeyMonitor.isTrusted || debugTrusted
+    }
+
+    private func pollAccessibility() {
+        let trusted = isTrusted
+        if trusted != axTrusted {
+            withAnimation(.spring(duration: 0.5, bounce: 0.25)) { axTrusted = trusted }
+        }
+        // The moment permission lands, the gate step has done its job — after
+        // a beat, so the check is seen landing.
+        guard step == .accessibility, trusted, !leavingAccessibility else { return }
+        leavingAccessibility = true
         Task { @MainActor in
-            try? await Task.sleep(nanoseconds: 20_000_000)
-            withAnimation(animation) { step = target }
+            try? await Task.sleep(for: .seconds(1.1))
+            leavingAccessibility = false
+            if step == .accessibility { advance() }
+        }
+    }
+
+    // MARK: - Practice
+
+    private func celebrate() {
+        withAnimation(.spring(duration: 0.5, bounce: 0.3)) { practiceSucceeded = true }
+        celebratedAt = .now
+    }
+
+    // MARK: - Debug
+
+    private func autoplayIfAsked() async {
+        guard let interval = OnboardingDebug.autoplayInterval else { return }
+        while !Task.isCancelled {
+            try? await Task.sleep(for: .seconds(interval))
+            if step == .done {
+                go(to: .welcome, direction: .forward)
+            } else {
+                advance()
+            }
+        }
+    }
+
+    private func debugStepHooks() async {
+        if step == .practice, OnboardingDebug.practiceSucceeds, !practiceSucceeded {
+            try? await Task.sleep(for: .seconds(1.6))
+            guard !Task.isCancelled else { return }
+            NotificationCenter.default.post(name: .flybyDidTriggerShortcut, object: nil)
+        }
+        if step == .accessibility, let delay = OnboardingDebug.grantsAccessibilityAfter {
+            try? await Task.sleep(for: .seconds(delay))
+            guard !Task.isCancelled else { return }
+            debugTrusted = true
+            pollAccessibility()
         }
     }
 }
@@ -517,4 +333,43 @@ extension Notification.Name {
     /// Settings asking for the walkthrough back, since the window it would need
     /// to open belongs to the app delegate.
     static let flybyShouldShowOnboarding = Notification.Name("flybyShouldShowOnboarding")
+}
+
+extension OnboardingView {
+    /// The walkthrough's window: a fixed landscape canvas, always dark, the
+    /// aura running right up under a transparent titlebar, movable by its
+    /// background. The
+    /// app delegate owns its lifetime: it positions it, keeps it, and hears
+    /// it close.
+    static func makeWindow(
+        onRecordingChanged: @escaping (Bool) -> Void,
+        onFinished: @escaping () -> Void
+    ) -> NSWindow {
+        let window = NSWindow(
+            contentRect: NSRect(origin: .zero, size: size),
+            styleMask: [.titled, .closable, .fullSizeContentView],
+            backing: .buffered,
+            defer: false
+        )
+        // Never drawn, but it's what VoiceOver, Mission Control and the
+        // Window menu call it.
+        window.title = "Welcome to Flyby"
+        // Flyby is a dark product — the overlay has no light mode — so its
+        // introduction is dark too, whatever the Mac is set to.
+        window.appearance = NSAppearance(named: .darkAqua)
+        window.titlebarAppearsTransparent = true
+        window.titleVisibility = .hidden
+        window.isMovableByWindowBackground = true
+        let host = NSHostingView(
+            rootView: OnboardingView(onRecordingChanged: onRecordingChanged, onFinished: onFinished)
+                .modifier(OnboardingDebug.AccessibilityOverrides())
+        )
+        // The canvas runs under the titlebar, so it's the window's whole
+        // frame. Left to size itself, the hosting view would fit the canvas
+        // *below* the titlebar and leave a band of nothing at the bottom.
+        host.sizingOptions = []
+        window.contentView = host
+        window.setFrame(NSRect(origin: .zero, size: size), display: false)
+        return window
+    }
 }

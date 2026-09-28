@@ -1,11 +1,11 @@
 # Flyby — Product Source of Truth
 
 **Status:** v0.3.0 (pre-release; dev/release builds, curl installer + in-app update checks; ad-hoc signed, not yet notarized)
-**Platform:** macOS 14 Sonoma and later
+**Platform:** macOS 27 and later, Apple silicon (0.3 and earlier: macOS 14 and later)
 **Bundle ID:** `com.fringecore.flyby` (release build, "Flyby") · `com.fringecore.flyby.dev` (dev build, "Flyby Dev")
 **Maker:** fringecore
 **Name note:** "Flyby" is the working product name (was "Quick Search"; the Swift package and modules are now `Flyby` / `FlybyCore`, though a few internal identifiers still say `quickSearch`)
-**Last verified against code:** 2026-09-27
+**Last verified against code:** 2026-09-28
 
 > This document is the single source of truth for the product website, marketing
 > copy, and the Product Hunt launch. Everything in the **Verified Facts** half is
@@ -58,15 +58,15 @@
 
 ### Standard description (2 sentences)
 Flyby is a macOS menu-bar utility that puts a search bar one keystroke
-away, anywhere on your Mac. Press your shortcut, a small pill appears at the
-bottom of the screen, you type, and you get an answer — drawn in a panel right
-above the pill, or in your browser, whichever you prefer.
+away, anywhere on your Mac. Press your shortcut, a dark glass bar appears at the
+bottom of the screen, you type, and you get an answer — in a card that grows up
+out of the bar, or in your browser, whichever you prefer.
 
 ### Elevator pitch (paragraph)
 Every search you do today costs you the same tax: leave your work, find or open a
 browser window, find the right tab, click the address bar, type, read, come back,
 find your place again. Flyby removes all of that. One keystroke summons a
-search pill over whatever app you're in. Type your question, hit Return, and the
+search bar over whatever app you're in. Type your question, hit Return, and the
 answer arrives in place — either as a streamed Gemini answer with live web
 sources, or as Google's AI Mode answer, read out of your own Google session and
 drawn natively — or in your browser if that's what the query deserves. Escape,
@@ -107,7 +107,7 @@ evaporates.
 | Sub-problem | How Flyby resolves it |
 | --- | --- |
 | **The browser is a trap.** Opening it exposes you to every other tab. | The answer appears over your current app. The browser is never opened unless you choose it. |
-| **Answers get buried in results.** Ten blue links when you wanted one fact. | Gemini and Google AI Mode both put a direct answer in the panel, with source cards underneath. |
+| **Answers get buried in results.** Ten blue links when you wanted one fact. | Gemini and Google AI Mode both put a direct answer in the card, with source cards underneath. |
 | **AI chat apps are a whole separate destination.** Cmd-tab to ChatGPT is the same context switch. | The AI answer arrives on top of the app you're in and disappears when you're done. |
 | **AI answers can be stale or invented.** | Gemini mode runs with Google Search grounding on, so answers reflect the live web, with clickable sources. |
 | **Launchers want to own everything.** Files, apps, clipboard, snippets, window management. | Flyby is a search bar and nothing else — no files, apps, clipboard or snippets to set up. |
@@ -121,31 +121,43 @@ evaporates.
 
 ## 3. How it works — the loop
 
-1. **Summon.** Double-tap **Right ⌥** (default, fully rebindable). A capsule
-   appears at the bottom centre of the screen the mouse is on, over whatever
-   you're doing.
-2. **Type.** The pill grows sideways as you type, tracking the caret, up to
-   860pt wide. With Liquid Glass, the ↩ and provider controls are glass bubbles
-   that morph out of the bar.
+1. **Summon.** Double-tap **Right ⌥** (default, fully rebindable). A dark
+   glass bar springs out of a small blob at the bottom centre of the screen the
+   mouse is on, over whatever you're doing, with a small provider dropdown
+   ("Google ⌄") at its trailing end.
+2. **Type.** Large type that wraps: the bar grows taller as you type, never
+   wider, up to six lines. Right after the last character a grey hint says who
+   will answer — "— Ask Gemini".
 3. **Answer.** Hit **Return**:
-   - **Gemini** → a written answer streams into a panel that unfolds upward out
-     of the pill, with source cards underneath.
+   - **Gemini** → the bar becomes the answer card — the same glass growing up
+     and out — your question flies up into its bubble, and a written answer
+     streams in under it, with source cards underneath.
    - **Google AI Mode** → Flyby runs Google's AI Mode in a hidden page, in your
      own Google session, reads the answer out of it as it streams, and draws it
-     in the same panel with the same renderer as Gemini. If Google wants a
+     in the same card with the same renderer as Gemini. If Google wants a
      CAPTCHA, a consent choice or a sign-in, the page is revealed in place with
      a banner saying why.
    - **Browser** → your default browser opens with the query in your chosen
-     engine, and the pill dismisses itself.
-4. **Leave.** **Esc**, or click anywhere outside. Both windows close and focus
-   returns to the app you were in.
+     engine, and Flyby dismisses itself.
+4. **Leave.** **Esc** (from the card, once to leave the input and once more to
+   close), **⌘W**, the ✕ in the card's corner, or click anywhere outside.
+   Flyby shrinks and fades away and focus returns to the app you were in.
 
 Along the way:
-- **⌘Return** escapes to your real browser from any mode, at any time.
-- **⌘.** stops an answer where it is, **⌘R** asks again, **⌘⇧C** copies the
-  whole answer with its sources.
-- The pill keeps keyboard focus the whole time, so you can retype and search
-  again without re-summoning it.
+- **⌘Return** (or **Open in Browser ⌘↩** in the card's corner) escapes to your
+  real browser from any mode, at any time.
+- **⌘.** (or the provider dropdown, which becomes **Stop ⌘.** while an answer
+  is coming) stops an answer where it is, **⌘R** asks again, **⌘⇧C** copies
+  the whole answer with its sources.
+- The input keeps keyboard focus after every question — in the card it's the
+  field along the bottom — so you can ask a follow-up without re-summoning it.
+  **Esc** leaves it to read the answer with the keyboard; **Tab**, or just
+  typing, goes back.
+- Two small pills under the bar, **Recent Chats ⌘Y** and **Shortcuts ⌘/**,
+  open the chat history and a card of every shortcut.
+- **/** at the start of the input opens a list of commands — /settings,
+  /history, /new, /google and the other providers, and more — filtered as you
+  type.
 - Links and source cards in an answer open in your default browser.
 
 ---
@@ -184,7 +196,7 @@ hardware: this release hasn't run on a real Mac yet — see
   holds on AZERTY), ⌘Tab, ⌘Space, ⌘`, ⌘⇧3/4/5, ⌃⌘Q and ⌃Space. Esc cancels
   recording instead of becoming the shortcut.
 - Holding a chord down does not repeat-fire; it re-arms only on release.
-- **First launch runs a one-time onboarding flow**: welcome → appearance and accent → provider and search engine (with the Gemini
+- **First launch runs a one-time onboarding flow**: welcome (with a live demo of the bar) → provider and search engine (with the Gemini
   key field if Gemini is picked) → **Connect your Google account** (only if
   Google AI Mode is picked; skippable) → shortcut recording (pre-filled with the
   default) → Accessibility grant (only if the recorded shape needs it and it
@@ -192,7 +204,7 @@ hardware: this release hasn't run on a real Mac yet — see
   that waits for the real trigger to fire → done, with an open-at-login toggle.
   Installs that already recorded a shortcut before onboarding existed skip it;
   Settings › Advanced can run it again.
-- The shortcut toggles: pressing it while the pill is open closes it.
+- The shortcut toggles: pressing it while Flyby is open closes it.
 - **The menu-bar icon becomes a warning triangle** if the trigger can't be
   installed, so it never fails silently — with "Grant Accessibility
   Permission…" when a modifier-only shortcut lacks the grant, or "Shortcut
@@ -201,20 +213,39 @@ hardware: this release hasn't run on a real Mac yet — see
   relaunch. Revoking Accessibility while the app runs is noticed too (the tap is
   health-checked every 3 s) and brings the warning back.
 - Opening the app again from Finder or `open -a`, or launching a second copy of
-  the same build, summons the pill. Only one copy of each build runs.
+  the same build, summons Flyby. Only one copy of each build runs.
 - The menu-bar menu has **Open Flyby**, **Settings…**, **Check for Updates…**
   and **Quit**, so the app is usable with no shortcut at all.
 
-### 4.2 The three answer providers
+### 4.2 The four answer providers
 
-All three are free to use. Switchable from the chip on the pill or in
-Settings › Search.
+All four are free to use. Switchable from the provider dropdown at the input's
+trailing end — "Google ⌄", "Gemini ⌄", "Apple Intelligence ⌄", "Browser ⌄" —
+with **⌘1–⌘4** directly, **⌘K** to open the dropdown, or in Settings › Answers. The input names the one it'll ask: "Ask Google", "Ask
+Gemini", "Ask Apple Intelligence", or "Search Google" (the browser engine's
+name) for Browser.
 
 | Provider | What it does | Setup | Where the answer lands |
 | --- | --- | --- | --- |
 | **Browser** | Sends the query to your default browser and dismisses | none | Your browser |
-| **Google AI Mode** | Runs Google AI Mode (`udm=50`) in a hidden page in your own Google session, reads the answer out and draws it natively | none required; connecting your Google account is recommended | Panel above the pill |
-| **Gemini** | Streams a written answer with live web sources | free API key | Panel above the pill |
+| **Google AI Mode** | Runs Google AI Mode (`udm=50`) in a hidden page in your own Google session, reads the answer out and draws it natively | none required; connecting your Google account is recommended | The answer card |
+| **Gemini** | Streams a written answer with live web sources | free API key | The answer card |
+| **Apple Intelligence** | Streams an answer from Apple's on-device model (FoundationModels) — private and offline, but no live web | Apple Intelligence turned on in System Settings | The answer card |
+
+**Apple Intelligence mode specifics:**
+- Runs on the Mac through the FoundationModels framework: no key, no account,
+  no network request — the question and the answer never leave the Mac.
+- No web access. The model is told to say so, and to point at Gemini or AI
+  Mode, for anything that depends on recent or live information, and never to
+  invent facts, links or sources. Answers have no source cards.
+- Follow-ups carry the conversation as the session's history, trimmed to fit
+  the model's context window (the last four answered turns at most).
+- The model is loaded as Flyby opens with this provider selected, so the
+  first question doesn't pay for it.
+- Settings › Answers and onboarding show whether it's ready; when Apple
+  Intelligence is off there's an **Open System Settings…** button, and when
+  the model is still downloading it says so. Guardrail stops, refusals,
+  unsupported languages and a too-long chat come back as readable messages.
 
 **Gemini mode specifics:**
 - Streams token-by-token over SSE (`streamGenerateContent?alt=sse`) — text
@@ -283,7 +314,7 @@ Settings › Search.
   (email)"), with **Reconnect** and **Disconnect**; disconnecting deletes the
   Google cookies and Google/YouTube site data from Flyby's store.
 - **One long-lived hidden page.** A single `WKWebView` is reused for every
-  search; google.com is preloaded when the pill opens with AI Mode selected. A
+  search; google.com is preloaded when Flyby opens with AI Mode selected. A
   search loads `https://www.google.com/search?q=…&udm=50&hl=…`, where `hl`
   follows your first preferred macOS language (mapped to Google's codes, e.g.
   `zh-TW`, `pt-BR`, `en-GB`). There is deliberately no `gl` region pin and no
@@ -303,10 +334,10 @@ Settings › Search.
 - **When Google wants you, the page is revealed in place.** A CAPTCHA
   (`/sorry/`, reCAPTCHA form or frame), an EU consent wall (`consent.*` or its
   form) or a sign-in (`accounts.*`) — detected from URLs and form/iframe hooks,
-  not wording — switches the panel to Google's page, with a banner above it
+  not wording — switches the card to Google's page, with a banner above it
   saying what Google wants, **Connect Google…** (for a CAPTCHA when you're not
   connected, and for sign-in) and **Open in Browser**. Clicks on those pages
-  stay in the panel so you can work through them; landing back on a results
+  stay in the card so you can work through them; landing back on a results
   page resumes the search. What Google sets while you do (a solved check, a
   consent choice) stays in Flyby's store like it would in a browser, and a
   sign-in completed on the page is adopted as your session.
@@ -315,8 +346,9 @@ Settings › Search.
   results page makes no progress for 45 s — with a banner saying so. With no
   page at all after 45 s the search fails with a message; an answer that stops
   growing for 45 s without Google's footer is kept as complete.
-- **Show Google's Page / Show Answer** in the panel header flips between the
-  native answer and the page at any time.
+- **Show Google's Page / Show Answer** in the provider dropdown's menu flips
+  between the native answer and the page at any time. The page sits inset in
+  the card, between its corner buttons and its input row, with rounded corners.
 - **Reader mode** (on by default) strips Google's chrome only while the page is
   on screen for its content — never on a CAPTCHA, consent or sign-in page:
   masthead, nav tabs, search box, sign-in link, left rail, footer, anything
@@ -324,42 +356,61 @@ Settings › Search.
   banners), and the query echoed back as a bubble. Selectors are structural and
   role-based. It can be turned off if it ever hides too much.
 - **Links:** on the revealed page, a link opens in your default browser and
-  dismisses the pill (except mid-CAPTCHA/consent/sign-in); `target=_blank` and
+  dismisses Flyby (except mid-CAPTCHA/consent/sign-in); `target=_blank` and
   `window.open` also go to your browser. Cited sources have Google's `/url?q=`
   redirect unwrapped and `#:~:text=` highlights dropped; non-http(s) links are
   rejected.
-- The page follows the app's light/dark setting, not the system's.
+- The page is always dark, like the card it's in: its web view is darkAqua, so
+  Google gets `prefers-color-scheme: dark` whatever the system is set to.
 - If the page's web process dies mid-answer, what already arrived is kept;
-  otherwise the panel says Google's page stopped and to try again.
+  otherwise the card says Google's page stopped and to try again.
 
 **Browser mode specifics:**
 - Four engines: **Google, DuckDuckGo, Bing, Perplexity**.
 - The engine setting applies to every browser hop, including ⌘Return from the
-  other two providers.
+  other providers.
 - Queries are percent-encoded to RFC 3986's unreserved set, so non-ASCII text
   and "+" arrive intact.
 
-### 4.3 The result panel
-- Unfolds **upward out of the pill**, centred on the same axis and on the pill's
-  own screen, so the two read as one object rather than two windows.
-- Animated: a 0.38 s critically damped curve (no overshoot) from 55% height,
-  with a fade. With Reduce Motion it's a 0.18 s fade in place.
-- Width is `52%` of the screen, clamped to 620–960pt, so it neither sprawls on an
-  ultrawide nor overflows a laptop display. It reaches from just above the pill
-  to 44pt below the top of the usable screen.
-- **Header:** a status glyph (spinner while working, warning on failure, a
-  raised hand while Google waits on you), the submitted query, a status line
-  ("Google AI Mode · Searching Google…", "Gemini · Thinking…", "Answering…",
-  "Waiting for you", "Didn't finish"), and buttons: **Stop** (⌘.) while an
-  answer is coming or **Search Again** (⌘R) once it's done or failed, **Copy
-  Answer** (⌘⇧C), **Show Google's Page / Show Answer** (AI Mode only), **Open in
-  Browser** (⌘↩) and **Close** (esc). With Liquid Glass these are round glass
-  buttons that merge and split as the set changes.
+### 4.3 The answer card
+- **The bar becomes the card.** On Return the bar's glass grows up and out into
+  the card, bottom-centre where the bar was, on one spring (0.48 s response,
+  0.82 damping); your question flies from where you typed it up into its bubble,
+  shrinking from the bar's 22pt to the bubble's 15pt as the bubble fills in
+  around it, and the input settles into a field along the card's bottom edge,
+  the provider dropdown still at its trailing end. With nothing left to show — **New
+  Chat**, or the history list closed with no chat behind it — the card folds
+  back down into the bar.
+- **Siri-sized, not window-sized:** 560pt wide on every screen, and as tall as
+  700pt or whatever fits between the bar's position and 44pt below the top of
+  the usable screen. The height is fixed while Flyby is open, so an answer
+  streaming in scrolls rather than resizing anything; the card's content is laid
+  out at that size and revealed by the growing glass.
+- **Corners:** a round glass **✕** top-left (close — or back out of the history
+  list, when it becomes a back arrow over a chat) and a glass capsule top-right
+  with its shortcut written on it, **Open in Browser ⌘↩** (diagonal arrows;
+  once there's a question). Recent Chats is the pill under the card.
+- **Conversation:** each question in a dark bubble with a tail, right-aligned;
+  each answer as plain white 16pt text under it, bold headings, no box. Content
+  scrolls under the corner buttons and the input row and dissolves at both
+  (scroll edge effect plus a fade).
+- **The provider dropdown** (in the input, bottom-right) becomes **Stop ⌘.** —
+  an accent-tinted capsule with a pulsing stop glyph — while an answer is
+  coming. Its menu (click, or ⌘K) holds the providers with ⌘1–⌘4, the browser
+  engines, and the chat's actions with their shortcuts: **Search Again** (⌘R),
+  **Copy Answer** (⇧⌘C), **Show Google's Page / Show Answer** (AI Mode only)
+  and **New Chat** (⌘N).
+- **Keyboard focus is shown.** In the card the input has an accent rim while it
+  has the keyboard. Leave it (Esc, or a click in an answer) and it says how to
+  get back: "⇥ tab to ask a follow-up". Anything typed while reading goes
+  straight into it.
 - While waiting: placeholder lines with a slow sheen (no sheen under Reduce
-  Motion). While streaming: new blocks fade in and a caret blinks after the last
-  one.
-- The answer sits in a reading column of at most 700pt, centred on wide panels.
-  Answer text is selectable.
+  Motion). While streaming: new blocks fade in, a caret blinks after the last
+  one, and the card scrolls to keep the newest text in view — until you scroll
+  up to read; scrolling back to the end picks it up again.
+- A follow-up lands at the end of the conversation, just above the input, and
+  the answer pushes it up as it arrives. A chat reopened from history opens on
+  its last question. Answer text is selectable.
 - **Sources** appear as a "Sources" row of cards (favicon, site, title) that
   scrolls sideways; clicking one opens it in your browser.
 - **Stop** freezes the answer as it stands ("Stopped before an answer arrived."
@@ -368,44 +419,42 @@ Settings › Search.
   copies just the selection.
 - Failures show a "No answer this time" card with the reason, **Try Again** and
   **Open in Browser**.
-- Re-searching swaps the contents in place rather than closing and reopening the
-  panel.
-- The pill keeps keyboard focus even though the panel is in front, so you can
-  keep typing.
+- **Search Again** re-answers the same turn in place: the question stays put.
+- **Closing Flyby** is a separate, quicker motion: bar or card shrink to 90%
+  and drop 18pt as one piece, fading a little behind the shrink (a 0.3 s smooth
+  spring, no bounce).
+- The input keeps keyboard focus throughout — it's one text field, in the bar
+  or along the card's bottom — so you can keep typing.
 
 ### 4.4 Appearance and theming
-- **Light / Dark / System.** Set once on `NSApp`, so the pill, the result panel
-  and the Settings window all inherit it. System follows macOS live.
-- **Liquid Glass** (macOS 26+), always — it's the design, not a setting. The pill is laid
-  out like Spotlight: a glass bar with the ↩ and provider controls as separate
-  glass bubbles that morph out of it as you type. The pill uses the
-  *interactive* glass variant that reacts to the pointer; the answer panel uses
-  the plain one, because that motion is a distraction in something you're
-  reading, with a floating glass header whose content dissolves under it as you
-  scroll. Built on the macOS 26 glass APIs; CI also compiles against the macOS
-  27 SDK.
-- **Classic material** — the `NSVisualEffectView` blur, with the ↩ badge and
-  provider chip inside a single capsule — when glass is off, on macOS 14–15
-  (where the toggle is disabled with "Requires macOS 26 or later."), and under
-  Reduce Transparency. Increase Contrast gets a stronger edge on it.
-- **Reduce Motion** swaps the panel's unfold for a fade and stops the loading
-  sheen and the pill's pulsing sparkle.
-- **Eight accent themes** — System plus Blue, Purple, Pink, Red, Orange, Green,
-  Graphite. System follows your macOS accent colour's hue (greyscale if it's
-  Graphite). Tints the ↩ badge, links in answers, the streaming caret, quote
-  bars, the busy sparkle and controls.
-- **Accents are derived, not hardcoded.** A theme is stored as a *hue*; the
-  actual colour is solved per appearance for a target WCAG relative luminance, on
-  two axes (brightness, then saturation when brightness can't get there —
-  saturated blue is intrinsically dark). Result, per the tuning constants in
-  `Theme.swift` (measured against the pill surface): **every theme lands at
-  4.15:1 contrast in light mode and 4.00:1 in dark.** The previous fixed system
-  colours ranged from 1.75:1 to 2.88:1. (That is below WCAG AA's 4.5:1 for body
-  text — see the do-not-claim list.)
-
-  *This is a genuinely uncommon amount of care and it's worth a website section.*
-- **VoiceOver labels** on the pill's controls, the panel header's buttons,
-  source cards, accent swatches and the Google account rows.
+- **Always dark, like Siri.** The bar and the card are dark whatever the
+  system is set to (their window is darkAqua); there is no appearance setting.
+  Settings and onboarding follow the system like any Mac window.
+- **Liquid Glass**, always — it's the design, not a setting. The bar and the
+  card are *smoked* glass: a dark gradient inside the glass, near-black at the
+  top and clearing toward the bottom so what's behind shows through, a dark
+  tint so it stays dark over a white wallpaper, and a thin lit rim, brighter
+  along the bottom. The controls on the card (✕, the Recent Chats and Open in
+  Browser capsules, the input field, the Google banner) are plain glass, a
+  shade lighter; the provider dropdown is a quiet filled capsule inside the
+  input, not glass of its own. The bar uses the *interactive* glass variant that reacts to
+  the pointer; the card uses the plain one, because that motion is a
+  distraction in something you're reading. Follows macOS 27's clear-to-tinted
+  glass slider.
+- **Settings** is a native split view: the system's floating glass sidebar and
+  each pane's title in the toolbar, like System Settings.
+- **Reduce Transparency** swaps every glass shape for an opaque dark fill with
+  a hairline rim. Increase Contrast gets a stronger edge.
+- **Reduce Motion:** the bar fades in without springing out of a blob, the bar
+  and the card cross-fade instead of morphing, the question doesn't fly, the
+  bar changes height without animating, and the close is a plain fade. The
+  loading sheen and the pulse on the stop glyph stop.
+- **The system accent colour**, not a setting of Flyby's: it tints the caret,
+  links in answers, the streaming caret, quote bars, the Stop chip, the input's
+  focus rim and controls.
+- **VoiceOver labels** on the input, the provider dropdown and Stop, the
+  card's corner buttons, question bubbles, source cards and the Google account
+  rows.
 
 ### 4.5 System integration
 - **Menu-bar only** (`LSUIElement`) — no Dock icon, no app switcher entry, no
@@ -415,9 +464,9 @@ Settings › Search.
   also appears in System Settings › General › Login Items. Non-binary states
   ("waiting for approval", "registration not found") are reported honestly in
   Settings instead of pretending the toggle worked.
-- **Multi-monitor aware** — the pill appears on the screen the mouse is on,
-  which is the one you're looking at, and the panel opens on the pill's screen.
-- Focus is handed back to whatever you were working in when the pill closes
+- **Multi-monitor aware** — the bar appears on the screen the mouse is on,
+  which is the one you're looking at, and the card grows out of it there.
+- Focus is handed back to whatever you were working in when Flyby closes
   (without hiding Settings or onboarding if one of those is open).
 - **Gets itself installed properly.** A release build launched from a disk
   image, a translocated location or Downloads offers to copy itself into
@@ -435,26 +484,44 @@ Settings › Search.
   all go, and onboarding starts over.
 
 ### 4.6 Interaction details that matter
+All of these are handled by one key monitor in the app delegate and listed on
+the ⌘/ overlay. The keyboard is in one of three places: **typing** in the input
+(text editing keeps every key it uses), **reading** the card (after Esc, or a
+click in an answer), or **in Google's page** (which keeps its own keys, Tab
+included).
+
 | Key / action | Behaviour |
 | --- | --- |
-| `Return` | Search with the selected provider |
-| `⌘Return` | Always open in your default browser, from any provider |
-| `⌘.` | Stop the answer where it is |
+| `Return` | Ask with the selected provider (a follow-up, once a chat is open) |
+| `⌥Return` | New line in the question |
+| `⌘Return` / Open in Browser ⌘↩ | Always open in your default browser, from any provider |
+| `⌘K` / click the dropdown | Provider menu |
+| `⌘1`–`⌘4` | Browser, Google AI Mode, Gemini, Apple Intelligence |
+| `⌘.` / Stop ⌘. | Stop the answer where it is (does nothing otherwise) |
 | `⌘R` | Ask the same query again, same provider |
-| `⌘⇧C` | Copy the whole answer, with sources (plain `⌘C` copies the selection) |
-| `Esc` | Close both windows |
-| Click outside | Close both windows |
+| `⇧⌘C` | Copy the whole answer, with sources (plain `⌘C` copies the selection) |
+| `⌘N` | New chat: the card folds back into the bar |
+| `⌘Y` / the Recent Chats pill, or `↑` in an empty input | Recent chats: `↑`/`↓` move, `Return` opens, `⌘⌫` deletes, `Esc` backs out |
+| `Esc` | One step back: the command list, the shortcuts overlay, recent chats, then (in the card) out of the input to read, then close |
+| `Tab` | Back into the input, from anywhere in the card |
+| Typing while reading | Goes straight into the input |
+| `↑`/`↓`, `Space`/`⇧Space`, `Page Up`/`Page Down`, `⌘↑`/`⌘↓`, `Home`/`End` | Scroll the answer while reading (Page Up/Down also while typing; Home/End also from an empty input) |
+| `⌘W` / ✕ | Close at once |
+| `⌘/` / the Shortcuts pill | Keyboard shortcuts overlay |
+| `/` at the start of the input | Command list: `↑`/`↓` pick, `Return` or `Tab` runs, `Esc` hides the list (nothing matching → Return asks the text) |
+| Click outside | Close |
 | Trigger again | Toggle closed |
 | `⌘,` | Settings |
 | Click a link or source card in an answer | Opens in your default browser |
-| Click a link on Google's revealed page | Opens in your default browser and dismisses the pill (stays put during a CAPTCHA, consent or sign-in) |
+| Click a link on Google's revealed page | Opens in your default browser and dismisses Flyby (stays put during a CAPTCHA, consent or sign-in) |
 
 ### 4.7 Install and updates
 - **Install** with one command:
   `curl -fsSL https://raw.githubusercontent.com/emonsaqibh/flyby/main/install.sh | bash`
   (`… | bash -s -- --beta` includes betas; `… | bash -s -- 0.3.0` pins a
   version). It picks the newest GitHub release that carries `Flyby.zip`,
-  requires macOS 14+, verifies the code signature and the bundle ID, clears the
+  requires macOS 14+ and refuses a download that needs a newer macOS than the
+  Mac has (0.4 and later need macOS 27), verifies the code signature and the bundle ID, clears the
   quarantine flag, quits a running copy, installs into `/Applications` (or
   `~/Applications`), refuses to overwrite an app that isn't Flyby, and opens it.
 - A script rather than a download link because releases aren't notarized yet,
@@ -473,61 +540,106 @@ Settings › Search.
 
 ## 5. Anatomy of the interface
 
-### The pill
-A capsule at the bottom centre of the screen, 52pt tall, 340pt wide at rest,
-growing to a maximum of 860pt as you type and then scrolling internally.
+### The bar
+Modelled on macOS 27's Siri. A large rounded rectangle of smoked glass at the
+bottom centre of the screen, 54pt above the Dock or screen edge — on top of
+the pills — 532pt wide
+(the card's width less its 14pt insets), 68pt tall for one line (26pt corner
+radius), growing 26pt taller per line up to six lines and then scrolling
+internally. It never gets wider. No icons inside:
 
-Left to right:
-- **Leading icon** — a magnifying glass, which becomes a pulsing sparkle in the
-  accent colour while an answer is on its way.
-- **Text field** — placeholder "Search anything…". (The dev build adds a small
-  DEV badge.)
-- **↩ badge** — appears in the accent colour once you've typed something, so the
-  affordance shows up exactly when it becomes true. Clickable too.
-- **Provider chip** — the current provider's icon and a chevron, with a hover
-  state: a filled, bordered well inside the classic capsule, or its own glass
-  bubble beside the glass bar. Icon-only so the pill stays narrow, but drawn as
-  an actual control, because a bare symbol reads as decoration and nobody clicks
-  decoration. Its icon says *where the answer lands*: compass for browser,
-  sparkle-magnifier for Google AI Mode, speech bubble for Gemini. Its menu is
-  split into **Answer with** and **Open in browser with**, because the engine
-  only ever applies to the browser hop — plus **Connect Google Account…** when
-  AI Mode is selected and no account is connected.
+- **Text** — 22pt white, wrapping. Empty, it says who will answer in grey:
+  **Ask Google** (AI Mode), **Ask Gemini**, **Ask Apple Intelligence**, or
+  **Search Google** (Browser — the engine's name). Once you type, the same words
+  follow your last character as a grey hint — "…in nature? — Ask Gemini" — on
+  whichever line that is. The hint fades in with the first character and
+  cross-fades when the provider changes. The caret is the ordinary one, in the
+  accent colour; macOS's inline predictions are turned off, since they'd draw
+  exactly where the hint goes.
+- **Provider dropdown** — at the trailing end, anchored to the bottom so it
+  stays with the last line as the bar grows: the provider's short name and a
+  chevron in a 28pt capsule — **Google ⌄**, **Gemini ⌄**, **Apple
+  Intelligence ⌄**, **Browser ⌄**. The text wraps before it; its column is as
+  wide as the wider of the name and Stop, so nothing rewraps when an answer
+  starts. Click or **⌘K** opens its menu, which pops up with the current
+  provider over the chip: **Answer with** (⌘1–⌘4) and **Open in browser with**,
+  because the engine only ever applies to the browser hop, then the chat's
+  actions with their shortcuts (**Search Again**, **Copy Answer**, **Show
+  Google's Page / Show Answer**, **New Chat**), and **Connect Google
+  Account…** when AI Mode is selected and no account is connected. While an
+  answer is coming it's **Stop ⌘.** instead. (The dev build puts a small DEV
+  badge on the bar's top edge, near the trailing end.)
 
-With Liquid Glass the ↩ badge and provider chip are separate glass bubbles
-beside the bar that flow out of it and back in; without glass everything sits
-inside one capsule.
+In the card the same field, with the same dropdown at its end, becomes a 40pt
+capsule along the bottom.
 
-**Engineering note worth telling:** the pill's window is a fixed, oversized,
-fully transparent frame with only the capsule drawn inside it. Resizing an
-`NSWindow` on every keystroke animates badly and lags a fast typist; animating
-the capsule's width inside a static window is a clean spring. Clicks on the
-transparent margin fall through to whatever is underneath. The window's margins
-are sized from the capsule's shadow radius so the drop shadow can't be clipped by
-the window edge.
+- **Slash commands** — "/" at the start of the input opens a small smoked list
+  just above it, filtered as you type (names that start with what's typed
+  first, then those with its letters in order: "stg" finds /settings), the
+  highlighted row marked ↩. ↑↓ pick, Return or Tab runs, Esc hides the list
+  (and only the list). Running one clears the "/…". The list only offers what
+  would do something now: **/google**, **/gemini**, **/apple**, **/browser**
+  (switch provider; the current one is ticked), **/new** (with a chat or the
+  history open), **/retry** and **/copy** (with an answer), **/history**,
+  **/shortcuts** and **/settings** (Flyby steps aside and Settings opens). If
+  nothing matches — "/etc/hosts" — it's a question, and Return asks it. The
+  "— Ask Google" hint hides while the list is up.
 
-### The answer panel
-A rounded rectangle above the pill, unfolding upward, in three layers: Google's
-page at the back (AI Mode only, kept mounted but invisible so the extractor can
-read it), the native answer in front of it, and a slim floating header on top.
-Same material as the pill — except when Google's page is showing, which gets a
-solid theme-aware backing, because a web view paints an opaque page over
-anything behind it and glass there would never be seen. When Google needs you,
-a banner sits above the page rather than over it, so it never covers the
+**The pills.** Under the bar, 10pt below it and 16pt above the Dock or screen
+edge, two small smoked capsules, 28pt tall: **🕘 Recent Chats ⌘Y** and **⌨
+Shortcuts ⌘/**, their keys written on them in a quieter grey. The one whose
+panel is open is in the accent colour with an accent rim. They're a row of
+their own, so the bar becomes the card above them without them moving; they
+come out a beat after the bar's glass as Flyby opens, and go before it as it
+closes.
+
+**Engineering note worth telling:** everything lives in one fixed, oversized,
+fully transparent window — the card's full width and height, the pills under it, plus a 40pt margin
+for the glass's shadow. Resizing an `NSWindow` on every keystroke animates badly
+and lags a fast typist, and two windows can only be animated by resizing them;
+animating shapes inside a static window is a clean spring, and it's what lets the
+bar and the card be one piece of glass. Clicks on the transparent parts fall
+through to whatever is underneath. There is one text field for the whole time
+Flyby is on screen — the bar's text and the card's input are the same field,
+restyled — so focus never has to move mid-animation.
+
+### The answer card
+The bar's own glass, grown up and out: 560pt wide, up to 700pt tall, its bottom
+edge where the bar's was, with a 34pt corner radius concentric with the controls
+inset 14pt in its corners. Three layers: Google's page at the back (AI Mode
+only, kept mounted but invisible so the extractor can read it; when showing,
+inset between the corner buttons and the input with rounded corners, dark like
+the card), the conversation or the recent-chats list in front of it, and the
+corner controls on top — a round glass **✕** top-left, and top-right a glass
+capsule with its shortcut written on it, **⤢ ⌘↩** (Open in Browser). Along the
+bottom, the input is a 40pt capsule field
+(15pt type, "Ask a follow-up") with the provider dropdown inside its trailing
+end, and an accent rim while it has the keyboard; without it, it reads "⇥ tab
+to ask a follow-up". The recent-chats list heads itself with its keys: ↑↓ move,
+↩ open, ⌘⌫ delete, esc back. The conversation scrolls the card's full height,
+under the buttons and the input, and dissolves at both edges. When Google needs
+you, a banner sits above the page rather than over it, so it never covers the
 checkbox you have to reach.
+
+**⌘/** (or the Shortcuts pill, or /shortcuts) lays every shortcut out on a
+small smoked card above the input, with the slash commands under them; Esc, ⌘/
+or a click puts it away.
 
 ---
 
 ## 6. Settings reference
 
-A 720×560 window with a sidebar, in the shape of System Settings: **General,
-Appearance, Search, Google Account, Advanced**.
+Always dark, in the shape of macOS 27 System Settings: a sidebar with Flyby's
+icon, name and version on top and a coloured icon badge per pane — **General,
+Shortcut, Answers, History, Google Account, Advanced** — and each pane opening
+with a large badge, its title and one line of description, the title also in
+the toolbar. Explanations sit under their sections as footers.
 
 ### General
 - **About** — the app icon, name (with a DEV badge in the dev build), version
   and commit.
-- **Shortcut** — click-and-press recorder, with a live explanation of what the
-  recorded trigger does ("Hold these together…", "Press this…", "Tap Right ⌥
+- **Shortcut** (its own pane) — the current shortcut drawn as key caps, a
+  click-and-press recorder, and a live explanation of what the recorded trigger does ("Hold these together…", "Press this…", "Tap Right ⌥
   twice…") and a note that key combos need no permissions while chords and
   double-taps need Accessibility.
 - **System** — **Move to Applications** (release build, only when it isn't in
@@ -538,14 +650,11 @@ Appearance, Search, Google Account, Advanced**.
   steps (Copy Install Command, then paste into Terminal). The dev build says
   updates are off.
 
-### Appearance
-- **Appearance** — System / Light / Dark (segmented).
-- **Accent** — eight swatches, each drawn in its own derived colour.
-
-### Search
-- **Answer with** — Browser / Google AI Mode / Gemini, with a one-line
-  description of the selected one; picking AI Mode with no account connected
-  adds a **Connect…** row.
+### Answers
+- **Answer with** — Browser / Google AI Mode / Gemini / Apple Intelligence as
+  selectable rows with their badges, the chosen one's setup below it; picking AI Mode with no
+  account connected adds a **Connect…** row, and picking Apple Intelligence
+  shows whether it's ready (with **Open System Settings…** when it's off).
 - **Search engine** — Google / DuckDuckGo / Bing / Perplexity, used for every
   browser hop.
 - **Google AI Mode › Reader mode** — toggle; applies when Flyby shows Google's
@@ -584,8 +693,9 @@ source.
 | Activity | Network activity |
 | --- | --- |
 | **Browser** search | The app makes **no network request** for the search. It hands a URL to your default browser. |
-| **Google AI Mode** search | Flyby's hidden `WKWebView` loads `www.google.com/search?q=…&udm=50&hl=…` — exactly one page per search you submit — in Flyby's own persistent web store, carrying your Google session if you connected one, and the page then loads whatever Google's page loads. When the pill opens with AI Mode selected, google.com is preloaded to warm the page. |
+| **Google AI Mode** search | Flyby's hidden `WKWebView` loads `www.google.com/search?q=…&udm=50&hl=…` — exactly one page per search you submit — in Flyby's own persistent web store, carrying your Google session if you connected one, and the page then loads whatever Google's page loads. When Flyby opens with AI Mode selected, google.com is preloaded to warm the page. |
 | **Gemini** search | One HTTPS request from your Mac directly to `generativelanguage.googleapis.com`, authenticated with your own API key. |
+| **Apple Intelligence** search | **No network request.** The answer is generated on the Mac by the system's on-device model. |
 | **Source cards** (Gemini and AI Mode) | Each card's icon is fetched from Google's favicon service (`www.google.com/s2/favicons?domain=<site>`). |
 | **Connect** a browser (Settings › Google Account) | No network. A local read of Safari's or Firefox's cookie file. |
 | **Sign in within Flyby** | Google's sign-in pages (`accounts.google.com`), in a Flyby window on the same private store. |
@@ -600,7 +710,7 @@ source.
   outbound request in the codebase; the only one not caused by a search is the
   update check, which asks GitHub for the public release list and adds no
   account or device identifier.
-- **No search history of its own.** The query is held in memory while the pill
+- **No search history of its own.** The query is held in memory while Flyby
   is open and cleared on close; Flyby writes no record of what you searched, and
   its logs never contain the query text (AI Mode logs only that a search started
   and how many characters it had). (See the caveat below about Google's side.)
@@ -648,9 +758,9 @@ you want no third party at all, use Browser mode with DuckDuckGo.
 
 | | |
 | --- | --- |
-| **Platform** | macOS 14.0 Sonoma or later |
-| **Architecture** | Release builds are universal (arm64 + x86_64); CI checks the binary with `lipo`. Dev builds are host-architecture only. |
-| **Language / stack** | Swift 6 toolchain (`swift-tools-version: 6.0`); `FlybyCore` in Swift 6 language mode (strict concurrency), the `Flyby` app target in Swift 5 mode. SwiftUI + AppKit, WebKit, Combine, Carbon HIToolbox, ServiceManagement, Security, and the system SQLite3 and CommonCrypto libraries (for reading browser cookie stores) |
+| **Platform** | macOS 27.0 or later |
+| **Architecture** | Apple silicon (arm64) only — macOS 27 doesn't run on Intel Macs; CI checks the binary with `lipo`. |
+| **Language / stack** | Swift 6.4 toolchain (`swift-tools-version: 6.4`, Xcode 27 — the Command Line Tools lack the SwiftUI macro plugin macOS 27 needs); `FlybyCore` in Swift 6 language mode (strict concurrency), the `Flyby` app target in Swift 5 mode. SwiftUI + AppKit, FoundationModels, WebKit, Combine, Carbon HIToolbox, ServiceManagement, Security, and the system SQLite3 and CommonCrypto libraries (for reading browser cookie stores) |
 | **Modules** | `FlybyCore` — Foundation-only logic, unit-tested; `Flyby` — the app; `FlybyCoreTests` |
 | **Dependencies** | **Zero.** No third-party packages. |
 | **App type** | `LSUIElement` menu-bar accessory — no Dock icon |
@@ -660,11 +770,11 @@ you want no third party at all, use Browser mode with DuckDuckGo.
 | **Release** | `./release.sh <version>` freezes `releases/<version>/` (the app, `Flyby.zip`, `source.tar.gz`, `COMMIT`) from a clean tree, refuses to overwrite a version, and installs it (`INSTALL=0` to skip). `./publish.sh <version> notes.md` tags `v<version>`, creates the GitHub release with `Flyby.zip` (a pre-release for `-beta` versions) and confirms the zip is attached. |
 | **Distribution** | GitHub Releases on `emonsaqibh/flyby`, installed with the curl script (§4.7). A drag-to-Applications DMG (`scripts/package-dmg.sh`) is made only when notarizing, or with `DMG=1`. |
 | **Signing** | Ad-hoc by default. `SIGN_IDENTITY` switches to a Developer ID with the hardened runtime and a secure timestamp; with `NOTARY_PROFILE` too, `release.sh` notarizes and staples the app, then makes and notarizes the DMG. **No Developer ID yet; not notarized.** |
-| **CI** | GitHub Actions on `macos-26` for every non-docs push: debug build, unit tests, the dev app, and a universal release build; both apps uploaded as artifacts. An informational job builds and tests against the macOS 27 SDK (Xcode 27 preview). |
+| **CI** | GitHub Actions on a macOS 27 / Xcode 27 runner for every non-docs push: debug build, unit tests, the dev app, and an arm64 release build; both apps uploaded as artifacts. |
 | **Tests** | FlybyCore unit tests: Safari/Chromium/Firefox cookie stores, cookie conversion, Google domain matching, browser discovery, markdown parsing, the answer model, AI Mode query URLs, page classification, link cleaning, extractor messages and account labels, and version parsing |
 | **App icon** | Generated placeholders: `Resources/AppIcon.icns` (glassy lens + comet on a gradient squircle) and an amber `AppIcon-Dev.icns` for the dev build, drawn by `Resources/IconGenerator/generate.swift` only when missing; swap by replacing the icns, no code change |
 | **Logging** | `os.Logger`, subsystem `com.fringecore.flyby` (both builds) |
-| **Liquid Glass** | macOS 26+; falls back automatically |
+| **Liquid Glass** | Always; the classic material only under Reduce Transparency |
 
 ### Source layout
 ```
@@ -674,20 +784,24 @@ Sources/FlybyCore/        Foundation-only logic, unit-tested (Tests/FlybyCoreTes
   AIMode/                 query URLs, page classification, link cleaning, messages
   Support/                SemanticVersion
 Sources/Flyby/            the app
-  main.swift, AppDelegate.swift   wiring: hotkey → pill, menu bar, windows
+  main.swift, AppDelegate.swift   wiring: hotkey → overlay, menu bar, windows
   SearchController.swift  one phase + one AnswerSnapshot for every provider
   GeminiProvider.swift    SSE streaming, grounding sources, readable errors
   Google/                 GoogleSession (cookie store, connect/refresh),
                           AIModeEngine (hidden page + extractor), sign-in window
   UI/                     answer renderer, attention banner, Google connect view
-  PillView/PillPanel      the capsule and its window
-  ResultPanel(View)       the panel, header, web layer
+  FlybyPanel, FlybyRootView   the window, the stage and its springs: bar ↔ card
+  InputBar                the input with its inline hint, the provider chip
+  ProviderMenu            the chip's menu (AppKit, so ⌘K can open it)
+  KeyboardShortcuts       the keyboard map as shown on the ⌘/ overlay
+  SlashCommands           "/" commands and their list
+  AnswerCard              the card's content: corner buttons, web layer
   SettingsView, OnboardingView
   HotKeyMonitor, Shortcut, ShortcutRecorder   Carbon hot keys + event tap
   Installer, SingleInstance                   where the app lives; one copy
   Updates/                GitHub release checks
   Support/BuildFlavor     dev vs release
-  Settings, Surface, Theme
+  Settings, Surface
 ```
 
 ---
@@ -939,10 +1053,10 @@ Say this out loud somewhere; it makes everything else believable.
 > lives in your macOS Keychain and the request goes straight from your Mac to
 > Google.
 
-**Native down to the contrast ratio**
-> Liquid Glass on macOS 26. Light, dark, or system. Eight accent themes whose
-> colours are *derived* rather than picked — every one solved for the same
-> contrast against the surface it's drawn on: 4.15:1 in light, 4.00:1 in dark.
+**Native, down to the details**
+> Liquid Glass throughout, and the smoked, always-dark look of macOS 27's Siri.
+> No themes to fiddle with: it takes your Mac's accent colour, and Settings and
+> onboarding follow your Mac's light or dark appearance like any native app.
 
 **Doesn't want to be your everything-bar**
 > No file search, no clipboard history, no window management, no extensions.
@@ -953,8 +1067,10 @@ Say this out loud somewhere; it makes everything else believable.
 > in your way. Just a magnifying glass in the menu bar.
 
 ### Microcopy
-- Empty pill placeholder: *Search anything…* (already in the product)
-- Download button: **Download for macOS** / sub: *Free · macOS 14+ · no sign-up*
+- Empty bar placeholder: *Ask Gemini* / *Ask Google* / *Ask Apple Intelligence*
+  / *Search Google*, by provider; *Ask a follow-up* in a chat (already in the
+  product)
+- Download button: **Download for macOS** / sub: *Free · macOS 27+ · no sign-up*
   (until releases are notarized, this has to hand over the curl one-liner — see
   [§14](#14-website-plan))
 - Setup line: *Paste a free Gemini key, or use it with no setup at all.*
@@ -975,7 +1091,7 @@ Say this out loud somewhere; it makes everything else believable.
 - Buttons: **Download for macOS** · *View on GitHub*. Until releases are
   notarized, "Download" must show the curl install command rather than link a
   file — a browser-downloaded build won't open.
-- Trust line: *Free · macOS 14+ · No sign-up · No telemetry* (add *Open source*
+- Trust line: *Free · macOS 27+ · No sign-up · No telemetry* (add *Open source*
   only once the repo has a LICENSE)
 
 **2. The problem** — three-step visual of the round trip (leave → get distracted
@@ -985,16 +1101,16 @@ the round trip."**
 **3. How it works** — four steps with a small looping clip each: Summon → Type →
 Answer → Leave.
 
-**4. Three providers** — three cards (Browser / AI Mode / Gemini) with the
-what-it-does and setup columns from the table above. Be explicit that all three
-are free.
+**4. Four providers** — four cards (Browser / AI Mode / Gemini / Apple
+Intelligence) with the what-it-does and setup columns from the table above. Be
+explicit that all four are free, and that Apple Intelligence never leaves the Mac.
 
 **5. Grounded answers with sources** — screenshot of the answer panel with source
 cards visible. Explain grounding in one sentence.
 
 **6. Made to disappear** — the design/engineering section. The transparent
 oversized window, the spring-animated width, the panel unfolding out of the pill,
-the derived accent contrast numbers, Liquid Glass. *Craft is the differentiator
+Liquid Glass. *Craft is the differentiator
 against a hundred AI-wrapper launches; show the numbers.*
 
 **7. Privacy** — the "what it does not do" list, verbatim from
@@ -1078,13 +1194,13 @@ settings.
 | Asset | Notes | Priority |
 | --- | --- | --- |
 | Hero loop (6s, silent, looping) | The whole product in one shot. **Highest-leverage asset on the site.** | P0 |
-| Screenshot: pill over an editor, dark | Show it small and unobtrusive | P0 |
-| Screenshot: answer panel with sources, dark | The payoff shot | P0 |
-| Screenshot: pill over a light app, light mode | Proves the theming | P1 |
-| Screenshot: provider chip menu open | Shows the three modes exist | P1 |
+| Screenshot: the bar over an editor, mid-question with the "— Ask Gemini" hint | Show it small and unobtrusive | P0 |
+| Screenshot: answer card with sources | The payoff shot | P0 |
+| Screenshot: the dark bar over a light app | Proves it holds up on anything (it's always dark) | P1 |
+| Screenshot: provider dropdown menu open | Shows the four modes exist | P1 |
 | Screenshot: Settings panes | Shows depth | P1 |
 | Clip: shortcut recorder in use | Shows the chord idea, which is unusual | P2 |
-| Clip: Liquid Glass refracting over a colourful window | Craft signal, macOS 26 only | P2 |
+| Clip: Liquid Glass refracting over a colourful window | Craft signal | P2 |
 | App icon | **Only a generated placeholder exists** — real artwork wanted for the bundle, the site and PH | P0 |
 | OG/social card | 1200×630 | P1 |
 
@@ -1114,11 +1230,11 @@ Menu Bar Apps
 
 **Gallery order** (first image is ~80% of the decision):
 1. Hero GIF — the full loop over a real editor.
-2. Answer panel with source cards.
-3. The pill, small and quiet, over a real app.
-4. Provider chip menu — the three ways to answer.
+2. Answer card with source cards.
+3. The bar, small and quiet, over a real app.
+4. Provider button menu — the ways to answer.
 5. Privacy card — "no sign-up · no server · no telemetry · key in Keychain".
-6. Settings — appearance + accents, proving the craft.
+6. Settings — the glass sidebar and pane headers, proving the craft.
 7. Comparison card vs launchers/AI apps.
 
 ### Maker's first comment (draft)
@@ -1152,10 +1268,8 @@ Menu Bar Apps
 > • **No permissions needed** for the shortcut if you record a key combo. The
 >   default double-tap needs Accessibility, because macOS won't deliver
 >   modifiers-with-no-key any other way.
-> • **Native, zero dependencies.** Swift + SwiftUI + AppKit. Liquid Glass on
->   macOS 26. The eight accent themes are *derived* per appearance rather than
->   hardcoded — every one solves for the same contrast ratio, 4.15:1 on light and
->   4.00:1 on dark.
+> • **Native, zero dependencies.** Swift + SwiftUI + AppKit. Liquid Glass
+>   throughout, and Apple Intelligence on-device.
 >
 > Two honest caveats: AI Mode reads Google's page, so it depends on Google's
 > markup — when Google wants a check, you'll see its page right there, and
@@ -1225,8 +1339,6 @@ Do **not** write any of these. They are false today.
 - ❌ "Auto-updates" / "updates itself" — it checks for updates and hands you a
   Terminal command; nothing installs automatically
 - ❌ "Open source" — no LICENSE file yet
-- ❌ "WCAG AA" / "accessible contrast" for the accents — 4.15:1 and 4.00:1 are
-  below AA's 4.5:1 for body text
 - ❌ Any speed, latency or CAPTCHA-rate figure — nothing has been measured on
   real hardware
 - ❌ Any user count, download count, rating, or testimonial that hasn't happened

@@ -90,7 +90,7 @@ cookie-backed YouTube Music client:
 | A2 | Every provider had its own state shape (`mode`, `answer`, `sources`, `errorMessage`, …) | ✅ `SearchController` is one `phase` + one `AnswerSnapshot`; every provider renders through the same native view |
 | A3 | AI Mode was a raw web page with CSS hacks; Gemini a separate markdown view | ✅ Both produce `AnswerBlock`s; one renderer (headings, nested lists, code, quotes, tables, sources, follow-ups) |
 | A4 | Module still named `QuickSearch` | ✅ Renamed to `Flyby` |
-| A5 | No tests, no CI | ✅ Unit tests for the cookie stores, markdown, AI Mode messages and versions; CI on macOS 26 + an informational macOS 27 SDK job |
+| A5 | No tests, no CI | ✅ Unit tests for the cookie stores, markdown, AI Mode messages and versions; CI on a macOS 27 / Xcode 27 runner |
 
 ### Search, providers and answers
 
@@ -108,6 +108,7 @@ cookie-backed YouTube Music client:
 | S10 | Result panel could open on a different display than the pill | ✅ Opens on the pill's screen |
 | S11 | Query history / recents | ⏳ Needs a privacy decision ❓ |
 | S12 | Follow-up conversation in AI Mode (typing into Google's composer) | ⏳ Follow-up chips exist; a true thread is next |
+| S13 | A private, offline provider | ✅ Apple Intelligence (FoundationModels, on-device): streams, carries follow-ups, prewarms as the pill opens; 🟡 run in the app on a real Mac |
 
 ### Hotkeys and input
 
@@ -136,8 +137,8 @@ cookie-backed YouTube Music client:
 | | Item | Status |
 | --- | --- | --- |
 | D1 | Glass only as a background swap | ✅ Spotlight-style glass pill with morphing bubbles; regular glass panel; glass header buttons; soft scroll edge |
-| D2 | macOS 27 "Golden Gate" | ✅ Uses the 26 APIs, which pick up 27's refinements automatically; menu icons kept visible under 27's new default; CI compiles against the 27 SDK |
-| D3 | Settings: three flat tabs, no Google account, no updates | ✅ Sidebar: General (+ Updates), Appearance, Search, Google Account, Advanced |
+| D2 | macOS 27 "Golden Gate" | ✅ Targets macOS 27 on Apple silicon (0.4); the 26 glass APIs are still the current ones in the 27 SDK and pick up its refinements; menu icons kept visible under 27's new default; pre-glass fallbacks removed except for Reduce Transparency |
+| D3 | Settings: three flat tabs, no Google account, no updates | ✅ Native split view with the glass sidebar: General (+ Updates), Appearance, Search, Google Account, Advanced |
 | D4 | Onboarding progress dots counted steps you'd never see; wrong slide direction on first Back | ✅ Fixed; Google step for AI Mode |
 | D5 | VoiceOver labels, Reduce Motion, Reduce Transparency | ✅ Labels and selected traits; fade instead of unfold; classic material under Reduce Transparency |
 | D6 | Real icon artwork (placeholder is generated) | ⏳ ❓ |
@@ -148,7 +149,7 @@ cookie-backed YouTube Music client:
 | | Item | Status |
 | --- | --- | --- |
 | B1 | One build for everything; no way to develop without touching the installed app | ✅ Flyby Dev vs Flyby, separate bundle ids — see [RELEASING.md](RELEASING.md) |
-| B2 | Host-architecture only | ✅ Release builds are universal; CI checks it |
+| B2 | Host-architecture only | ✅ Superseded: from 0.4, Apple silicon only (macOS 27 has no Intel support); CI checks it |
 | B3 | DMG signed without a timestamp; only the DMG stapled | ✅ `release.sh` notarizes + staples the app, then the DMG |
 | B4 | No release process, no updater | ✅ `release.sh` / `publish.sh` / `install.sh`, in-app update checks |
 | B5 | Old `Golden` / `beta` releases with non-version tags | ✅ Deleted |

@@ -15,13 +15,39 @@
 # All development happens in the dev build. It takes its version from git
 # ("0.3.0-dev.14 · pill": 14 commits past v0.3.0, on branch feature/pill), wears
 # an amber icon and a DEV badge, and never checks for updates. A release build is
-# made once per version by release.sh, universal (arm64 + x86_64), and frozen.
+# made once per version by release.sh, and frozen. Both are Apple silicon only:
+# Flyby needs macOS 27, which doesn't run on Intel Macs.
+#
+# Needs Xcode 27. macOS 27's SwiftUI implements @State and friends as macros,
+# and their compiler plugin ships with Xcode, not the Command Line Tools — so
+# when xcode-select points at the CLT, Xcode is used for this build anyway.
 #
 # Signing is ad-hoc unless SIGN_IDENTITY names a Developer ID, which also turns on
 # the hardened runtime and a secure timestamp (both required for notarization,
 # which release.sh does).
 set -euo pipefail
 cd "$(dirname "$0")"
+
+# MARK: - Toolchain
+
+# An Xcode, not the CLT (which lack the macro plugin), with the macOS 27 SDK.
+builds_flyby() {
+  [[ -f "$1/Platforms/MacOSX.platform/Developer/usr/lib/swift/host/plugins/libSwiftUIMacros.dylib" ]] || return 1
+  local sdk
+  sdk="$(DEVELOPER_DIR="$1" xcrun --sdk macosx --show-sdk-version 2>/dev/null)" || return 1
+  [[ "${sdk%%.*}" -ge 27 ]]
+}
+if [[ -z "${DEVELOPER_DIR:-}" ]] && ! builds_flyby "$(xcode-select -p)"; then
+  while IFS= read -r xcode; do
+    if builds_flyby "$xcode/Contents/Developer"; then
+      export DEVELOPER_DIR="$xcode/Contents/Developer"
+      break
+    fi
+  done < <(echo /Applications/Xcode.app; mdfind "kMDItemCFBundleIdentifier == 'com.apple.dt.Xcode'" 2>/dev/null)
+  [[ -n "${DEVELOPER_DIR:-}" ]] \
+    || { echo "✗ Flyby needs Xcode 27 — the Command Line Tools can't build macOS 27 SwiftUI" >&2; exit 1; }
+  echo "› Using $(dirname "$(dirname "$DEVELOPER_DIR")") (xcode-select points at a toolchain that can't build Flyby)"
+fi
 
 FLAVOR="${FLAVOR:-dev}"
 BASE_ID="com.fringecore.flyby"
@@ -36,8 +62,7 @@ case "$FLAVOR" in
     APP_NAME="Flyby Dev"
     BUNDLE_ID="$BASE_ID.dev"
     ICON=Resources/AppIcon-Dev.icns
-    # Host architecture only — twice as fast, and it only ever runs here.
-    ARCHS="${ARCHS:-$(uname -m)}"
+    ARCHS="${ARCHS:-arm64}"
     # A readable version from git: v0.3.0-14-g6160965 → "0.3.0-dev.14", plus
     # " · pill" on feature/pill. Before the first v-tag, the plist's version.
     if [[ -z "${VERSION:-}" ]]; then
@@ -57,7 +82,7 @@ case "$FLAVOR" in
     APP_NAME="Flyby"
     BUNDLE_ID="$BASE_ID"
     ICON=Resources/AppIcon.icns
-    ARCHS="${ARCHS:-arm64 x86_64}"
+    ARCHS="${ARCHS:-arm64}"
     : "${VERSION:?FLAVOR=release needs VERSION — use ./release.sh <version>}"
     # Monotonic across releases, which is all CFBundleVersion has to be.
     BUILD_NUMBER="${BUILD_NUMBER:-$(date +%Y%m%d%H%M)}"
@@ -84,10 +109,9 @@ mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$BIN" "$APP/Contents/MacOS/Flyby"
 
 # SwiftPM's default build system (from Xcode 27) stamps the binary with the
-# deployment target as its SDK version too: "built with the macOS 14 SDK".
-# macOS picks which generation of its design an app gets from that number —
-# Liquid Glass follows the macOS 27 glass slider only in apps built with the
-# macOS 27 SDK — so write the SDK that was actually used back in.
+# deployment target as its SDK version too, so a 27.0 target built with a
+# newer SDK claims the older one. macOS picks which generation of its design
+# an app gets from that number, so write the SDK that was actually used back in.
 SDK_VERSION="$(xcrun --sdk macosx --show-sdk-version)"
 read -r MIN_OS STAMPED_SDK < <(otool -l "$APP/Contents/MacOS/Flyby" \
   | awk '/LC_BUILD_VERSION/ { found = 1 } found && $1 == "minos" { minos = $2 } found && $1 == "sdk" { print minos, $2; exit }')

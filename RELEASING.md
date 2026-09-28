@@ -9,7 +9,7 @@ people install, and each version of it is built once and frozen.
 | App | `build/Flyby Dev.app`, and every build kept in `dev-builds/<version>/` | `releases/<version>/Flyby.app` → `/Applications/Flyby.app` |
 | Bundle ID | `com.fringecore.flyby.dev` | `com.fringecore.flyby` |
 | Version | from git: `0.3.0-dev.14 · pill` | exactly what you pass: `0.3.0`, `0.4.0-beta.1` |
-| Architectures | this Mac's only (fast) | universal (arm64 + x86_64) |
+| Architectures | arm64 | arm64 — macOS 27 doesn't run on Intel Macs |
 | Icon / badge | amber icon, **DEV** badge | blue icon, no badge |
 | Updates | off — rebuild instead | checks GitHub, offers the install command |
 
@@ -25,11 +25,14 @@ CONF=debug ./build.sh    # unoptimized, for lldb
 swift test               # FlybyCore unit tests
 ```
 
-Every push runs CI on GitHub's macOS 26 runner: unit tests, the dev build, and
-a universal release-flavor build. Both apps are attached to the run as
-artifacts (`Flyby-Dev`, `Flyby-release-ci`) if you want to try a build without
-compiling. A second job builds against the macOS 27 SDK on GitHub's preview
-image; it's informational and doesn't block.
+Building needs Xcode 27 (`build.sh` uses it even when `xcode-select` points at
+the Command Line Tools, which can't build macOS 27 SwiftUI). For a bare
+`swift test`, prefix `DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer`.
+
+Every push runs CI on a macOS 27 runner with Xcode 27: unit tests, the dev
+build, and an Apple silicon release-flavor build. Both apps are attached to the
+run as artifacts (`Flyby-Dev`, `Flyby-release-ci`) if you want to try a build
+without compiling.
 
 **Branches:** `main` only ever holds released or releasable code. Work happens
 on `dev` (or `feature/<name>` branches merged into `dev`); when `dev` is ready,
@@ -65,8 +68,8 @@ merge it into `main` and release from `main`.
 
 ### Or let GitHub do it
 
-`.github/workflows/release.yml` does the same on GitHub's macOS runner — tests,
-a universal release build, and the GitHub release with `Flyby.zip` attached
+`.github/workflows/release.yml` does the same on a macOS 27 runner — tests,
+an Apple silicon release build, and the GitHub release with `Flyby.zip` attached
 (a pre-release for `-beta` versions). Notes come from
 `docs/releases/<version>.md` if it exists. Two ways to start it, neither
 needing a Mac:

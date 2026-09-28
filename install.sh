@@ -92,6 +92,14 @@ APP="$TMP/unzipped/$APP_NAME.app"
 codesign --verify --deep --strict "$APP" 2>/dev/null || fail "the downloaded app failed its signature check"
 [[ "$(/usr/libexec/PlistBuddy -c 'Print CFBundleIdentifier' "$APP/Contents/Info.plist")" == "$BUNDLE_ID" ]] \
   || fail "the download isn't Flyby ($BUNDLE_ID)"
+# Flyby 0.4 and later need macOS 27 (so Apple silicon); earlier releases run
+# from macOS 14. Go by what the download itself asks for, so a version named
+# on the command line is checked too, and a working copy is never replaced by
+# one that can't open here.
+needs="$(/usr/libexec/PlistBuddy -c 'Print LSMinimumSystemVersion' "$APP/Contents/Info.plist" 2>/dev/null || echo 0)"
+have="$(sw_vers -productVersion)"
+[[ "$(printf '%s\n%s\n' "$needs" "$have" | sort -V | head -1)" == "$needs" ]] \
+  || fail "$APP_NAME ${TAG#v} needs macOS $needs or later (you have $have). An earlier version still runs here: … | bash -s -- 0.3.0-beta.1"
 xattr -dr com.apple.quarantine "$APP" 2>/dev/null || true
 
 # /Applications is where permissions and open-at-login expect it; fall back to

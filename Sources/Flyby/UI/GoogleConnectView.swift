@@ -26,8 +26,14 @@ struct GoogleConnectView: View {
     @ViewBuilder
     var body: some View {
         switch layout {
-        case .form: formBody
-        case .card: cardBody
+        case .form:
+            // A Group, so the animation reaches every section: a problem row
+            // or a new connection eases in rather than popping.
+            Group { formBody }
+                .animation(.smooth(duration: 0.3), value: session.problem)
+                .animation(.smooth(duration: 0.3), value: session.isConnected)
+        case .card:
+            cardBody
         }
     }
 
@@ -82,7 +88,8 @@ struct GoogleConnectView: View {
             InAppSignInRow(session: session, isPrimary: browsers.isEmpty)
             PrivacyNote()
         }
-        .animation(.easeOut(duration: 0.2), value: session.problem)
+        .animation(.smooth(duration: 0.3), value: session.problem)
+        .animation(.smooth(duration: 0.3), value: session.isConnected)
     }
 
     private var browsers: [Browser] { session.availableBrowsers }
@@ -97,8 +104,11 @@ private struct GoogleStatusRow: View {
     var body: some View {
         HStack(spacing: 10) {
             Image(systemName: session.isConnected ? "checkmark.circle.fill" : "person.crop.circle.badge.questionmark")
-                .font(.system(size: 20))
+                .font(.system(size: 22))
+                .symbolRenderingMode(.hierarchical)
                 .foregroundStyle(session.isConnected ? Color.green : Color.secondary)
+                .contentTransition(.symbolEffect(.replace))
+                .frame(width: 28)
                 .accessibilityHidden(true)
 
             VStack(alignment: .leading, spacing: 2) {
@@ -114,7 +124,7 @@ private struct GoogleStatusRow: View {
             Spacer(minLength: 8)
 
             if session.isConnected {
-                Button("Disconnect") {
+                Button("Disconnect", role: .destructive) {
                     disconnecting = true
                     Task {
                         await session.disconnect()

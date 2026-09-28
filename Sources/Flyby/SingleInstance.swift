@@ -6,15 +6,17 @@ import AppKit
 /// over one shortcut, and it happens more easily than it sounds: open the disk
 /// image's copy while the installed one is running, or launch a second clone
 /// of the app from somewhere else. The newcomer hands over to the copy already
-/// running — which shows its pill, as though the launch had been a request
-/// for it — and leaves.
+/// running — which opens Flyby, as though the launch had been a request for
+/// it — and leaves.
 ///
 /// Matched on the running bundle's own identifier, so the dev and release
 /// builds (different identifiers) still run side by side.
 enum SingleInstance {
     /// Posted by a newcomer to the copy already running. Carries the bundle
-    /// identifier so one build's request never reaches the other.
-    static var showPillRequest: Notification.Name {
+    /// identifier so one build's request never reaches the other. The name's
+    /// last part is from when Flyby was a pill; it stays, so a newer copy
+    /// can still hand over to an older one that's running.
+    static var showRequest: Notification.Name {
         Notification.Name((Bundle.main.bundleIdentifier ?? "com.fringecore.flyby") + ".showPill")
     }
 
@@ -42,7 +44,7 @@ enum SingleInstance {
         // Delivered immediately: the running copy is usually in the
         // background, where distributed notifications otherwise wait.
         DistributedNotificationCenter.default().postNotificationName(
-            showPillRequest,
+            showRequest,
             object: nil,
             userInfo: nil,
             deliverImmediately: true

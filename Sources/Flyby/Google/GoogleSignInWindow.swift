@@ -59,7 +59,6 @@ final class GoogleSignInWindow: NSObject, NSWindowDelegate, WKNavigationDelegate
 
         webView.navigationDelegate = self
         webView.uiDelegate = self
-        webView.appearance = AppSettings.shared.appearance.nsAppearance
         if let url = URL(string: GoogleSession.signInURLString) {
             webView.load(URLRequest(url: url))
         }
