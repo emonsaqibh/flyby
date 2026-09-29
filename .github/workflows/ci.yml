@@ -32,6 +32,14 @@ jobs:
           echo "Using $XCODE"
           sudo xcode-select -s "$XCODE"
           xcodebuild -version
+          # The image has pointed SDKROOT at a Command Line Tools SDK that
+          # isn't installed (since 2026-09-28), which fails every xcrun and
+          # swift call. Use the selected Xcode's SDK, here and in later steps.
+          echo "SDKROOT was '${SDKROOT:-}', DEVELOPER_DIR was '${DEVELOPER_DIR:-}'"
+          unset SDKROOT
+          SDKROOT="$(xcrun --sdk macosx --show-sdk-path)"
+          export SDKROOT
+          echo "SDKROOT=$SDKROOT" >> "$GITHUB_ENV"
           SDK=$(xcrun --show-sdk-version)
           swift --version
           sw_vers
