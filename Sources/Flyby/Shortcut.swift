@@ -17,6 +17,34 @@ enum Shortcut: Equatable {
     /// Screenshots the window you're in and opens Flyby with it: ⌥⇧Space, a
     /// plain key combo, so it needs no Accessibility permission.
     static let screenshotDefault = Shortcut.keyCombo(keyCode: UInt16(kVK_Space), modifiers: [.option, .shift])
+    /// What turning the screenshot shortcut on picks, in order, skipping any
+    /// that would collide with the one that opens Flyby.
+    static let screenshotDefaults: [Shortcut] = [
+        screenshotDefault,
+        .keyCombo(keyCode: UInt16(kVK_Space), modifiers: [.control, .option]),
+        .keyCombo(keyCode: UInt16(kVK_ANSI_S), modifiers: [.control, .option]),
+    ]
+
+    /// Whether pressing one would also set off the other: the same shortcut,
+    /// or one made out of the other. A chord inside a bigger chord goes off
+    /// on the way to it, and a chord's modifiers, held for a key combo, fire
+    /// the chord before the key lands. A double-tap needs its key alone, so
+    /// it collides only with itself.
+    func collides(with other: Shortcut) -> Bool {
+        switch (self, other) {
+        case (.keyCombo(let a, let am), .keyCombo(let b, let bm)):
+            return a == b && am.intersection(.deviceIndependentFlagsMask) == bm.intersection(.deviceIndependentFlagsMask)
+        case (.modifierChord(let a), .modifierChord(let b)):
+            return a.isSubset(of: b) || b.isSubset(of: a)
+        case (.modifierChord(let keys), .keyCombo(_, let modifiers)),
+             (.keyCombo(_, let modifiers), .modifierChord(let keys)):
+            return keys.allSatisfy { modifiers.contains($0.modifierFlag) }
+        case (.doubleTap(let a), .doubleTap(let b)):
+            return a == b
+        default:
+            return false
+        }
+    }
 
     var displayString: String {
         switch self {
@@ -285,6 +313,18 @@ extension TriggerKey {
         case .leftOption:   return "L⌥"
         case .rightOption:  return "R⌥"
         case .rightControl: return "R⌃"
+        }
+    }
+}
+
+extension TriggerKey {
+    /// The side-agnostic modifier it is, as a key combo spells it.
+    var modifierFlag: NSEvent.ModifierFlags {
+        switch self {
+        case .leftControl, .rightControl: return .control
+        case .leftShift, .rightShift:     return .shift
+        case .leftCommand, .rightCommand: return .command
+        case .leftOption, .rightOption:   return .option
         }
     }
 }

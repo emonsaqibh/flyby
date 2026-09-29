@@ -32,7 +32,11 @@ struct ShortcutStep: View {
                 Text("Shortcut")
                     .font(.system(size: 13, weight: .medium))
                     .foregroundStyle(.secondary)
-                ShortcutRecorder(shortcut: settings.shortcutBinding, onRecordingChanged: onRecordingChanged)
+                ShortcutRecorder(
+                    shortcut: settings.shortcutBinding,
+                    conflict: { settings.conflict(forShortcut: $0) },
+                    onRecordingChanged: onRecordingChanged
+                )
                     .frame(width: 260)
             }
             .padding(.horizontal, 16)

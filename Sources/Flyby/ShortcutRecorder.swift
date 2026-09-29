@@ -17,6 +17,9 @@ struct ShortcutRecorder: View {
     @Binding var shortcut: Shortcut
     /// What Reset goes back to.
     let defaultShortcut: Shortcut
+    /// Why a shortcut can't be this one — it's the other shortcut's, say —
+    /// or nil. A refused one is said under the field and recording goes on.
+    let conflict: (Shortcut) -> String?
     var onRecordingChanged: (Bool) -> Void
 
     @State private var isRecording = false
@@ -45,10 +48,12 @@ struct ShortcutRecorder: View {
     init(
         shortcut: Binding<Shortcut>,
         defaultShortcut: Shortcut = .default,
+        conflict: @escaping (Shortcut) -> String? = { _ in nil },
         onRecordingChanged: @escaping (Bool) -> Void = { _ in }
     ) {
         _shortcut = shortcut
         self.defaultShortcut = defaultShortcut
+        self.conflict = conflict
         self.onRecordingChanged = onRecordingChanged
     }
 
@@ -135,9 +140,13 @@ struct ShortcutRecorder: View {
         if isRecording {
             fieldButton("xmark.circle.fill", help: "Cancel") { setRecording(false) }
         } else if shortcut != defaultShortcut {
-            fieldButton("arrow.counterclockwise.circle.fill", help: "Reset to \(defaultShortcut.voiceOverDescription)") {
+            // Not while the default is the other shortcut's.
+            let blocked = conflict(defaultShortcut)
+            fieldButton("arrow.counterclockwise.circle.fill", help: blocked ?? "Reset to \(defaultShortcut.voiceOverDescription)") {
                 shortcut = defaultShortcut
             }
+            .disabled(blocked != nil)
+            .opacity(blocked == nil ? 1 : 0.35)
         } else {
             Color.clear
         }
@@ -205,7 +214,20 @@ struct ShortcutRecorder: View {
             if !heldModifiers.isEmpty { gestureHadKey = true }
             return
         }
-        shortcut = .keyCombo(keyCode: keyCode, modifiers: modifiers)
+        commit(.keyCombo(keyCode: keyCode, modifiers: modifiers))
+    }
+
+    /// The recorded shortcut, unless it's taken: then why, under the field,
+    /// and still listening — the modifiers still held don't count as a new
+    /// gesture when they're let go.
+    private func commit(_ candidate: Shortcut) {
+        if let reason = conflict(candidate) {
+            hint = reason
+            pendingTap = nil
+            if !heldModifiers.isEmpty { gestureHadKey = true }
+            return
+        }
+        shortcut = candidate
         setRecording(false)
     }
 
@@ -227,8 +249,7 @@ struct ShortcutRecorder: View {
         guard !hadKey else { return }
 
         if peak.count >= 2 {
-            shortcut = .modifierChord(peak)
-            setRecording(false)
+            commit(.modifierChord(peak))
         } else if let key = peak.first {
             hint = nil
             commitOrPrimeTap(of: key)
@@ -240,8 +261,7 @@ struct ShortcutRecorder: View {
     private func commitOrPrimeTap(of key: TriggerKey) {
         let now = Date()
         if pendingTap == key, now.timeIntervalSince(pendingTapTime) <= Self.doubleTapWindow {
-            shortcut = .doubleTap(key)
-            setRecording(false)
+            commit(.doubleTap(key))
             return
         }
 

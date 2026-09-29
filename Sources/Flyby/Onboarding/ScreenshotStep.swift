@@ -44,6 +44,7 @@ struct ScreenshotStep: View {
                 ShortcutRecorder(
                     shortcut: settings.screenshotShortcutBinding,
                     defaultShortcut: .screenshotDefault,
+                    conflict: { settings.conflict(forScreenshot: $0) },
                     onRecordingChanged: onRecordingChanged
                 )
                 .frame(width: 240)

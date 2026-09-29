@@ -36,6 +36,7 @@ struct ShortcutPane: View {
                 LabeledContent("Record a new shortcut") {
                     ShortcutRecorder(
                         shortcut: mainShortcut,
+                        conflict: { settings.conflict(forShortcut: $0) },
                         onRecordingChanged: onRecordingChanged
                     )
                     .frame(width: 210)
@@ -51,6 +52,7 @@ struct ShortcutPane: View {
                         ShortcutRecorder(
                             shortcut: screenshotShortcut,
                             defaultShortcut: .screenshotDefault,
+                            conflict: { settings.conflict(forScreenshot: $0) },
                             onRecordingChanged: onRecordingChanged
                         )
                         .frame(width: 210)

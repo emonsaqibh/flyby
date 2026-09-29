@@ -225,8 +225,15 @@ final class AppSettings: ObservableObject {
         } else {
             hasCompletedOnboarding = defaults.dictionary(forKey: "shortcut") != nil
         }
-        shortcut = AppSettings.loadShortcut(from: defaults)
-        screenshotShortcut = AppSettings.loadScreenshotShortcut(from: defaults)
+        let main = AppSettings.loadShortcut(from: defaults)
+        shortcut = main
+        var screenshot = AppSettings.loadScreenshotShortcut(from: defaults)
+        // Saved before the two were kept apart: the one that opens Flyby wins.
+        if let colliding = screenshot, colliding.collides(with: main) {
+            screenshot = nil
+            defaults.set(["kind": "off"], forKey: "screenshotShortcut")
+        }
+        screenshotShortcut = screenshot
         hasCapturedScreen = defaults.bool(forKey: "hasCapturedScreen")
         whatsNewSeen = defaults.integer(forKey: "whatsNewSeen")
         provider = ProviderKind(rawValue: defaults.string(forKey: "provider") ?? "") ?? .browser
@@ -311,21 +318,41 @@ final class AppSettings: ObservableObject {
 
     // MARK: - The two shortcuts
 
-    /// One press can't both open Flyby and take a screenshot. Opening Flyby
-    /// wins: taking the screenshot shortcut's keys turns that one off, which
-    /// the Settings pane and the walkthrough both show — better than refusing
-    /// keys during onboarding, before screenshots have even come up.
-    func setShortcut(_ new: Shortcut) {
-        if new == screenshotShortcut { screenshotShortcut = nil }
+    /// One press can't both open Flyby and take a screenshot, so neither
+    /// shortcut may collide with the other (`Shortcut.collides`): each is
+    /// refused, with the reason, while the other has those keys. The
+    /// recorders ask `conflict(forShortcut:)` / `conflict(forScreenshot:)`
+    /// first and say why; these refuse anything that gets past them.
+    @discardableResult
+    func setShortcut(_ new: Shortcut) -> Bool {
+        guard conflict(forShortcut: new) == nil else { return false }
         shortcut = new
+        return true
     }
 
-    /// Refused, with false, when `new` is what opens Flyby.
     @discardableResult
     func setScreenshotShortcut(_ new: Shortcut?) -> Bool {
-        if let new, new == shortcut { return false }
+        if let new, conflict(forScreenshot: new) != nil { return false }
         screenshotShortcut = new
         return true
+    }
+
+    /// Why `candidate` can't open Flyby, if it can't.
+    func conflict(forShortcut candidate: Shortcut) -> String? {
+        guard let screenshot = screenshotShortcut, candidate.collides(with: screenshot) else { return nil }
+        return "That would also take a screenshot — \(screenshot.displayString) is your screenshot shortcut. Pick another, or change that one first."
+    }
+
+    /// Why `candidate` can't take screenshots, if it can't.
+    func conflict(forScreenshot candidate: Shortcut) -> String? {
+        guard candidate.collides(with: shortcut) else { return nil }
+        return "That would also open Flyby — \(shortcut.displayString) is what opens it. Pick another."
+    }
+
+    /// Turning the screenshot shortcut on: the first default that doesn't
+    /// collide with what opens Flyby.
+    var screenshotShortcutToEnable: Shortcut? {
+        Shortcut.screenshotDefaults.first { conflict(forScreenshot: $0) == nil }
     }
 
     private static func loadScreenshotShortcut(from defaults: UserDefaults) -> Shortcut? {
