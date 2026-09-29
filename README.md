@@ -31,7 +31,7 @@
 
 ## Video Walkthrough
 
-https://github.com/user-attachments/assets/531b2578-ca2c-4a6a-878a-0fcc9f19fd4e
+https://github.com/user-attachments/assets/815cd445-42b1-4e2e-a687-5d322c5145dd
 
 ---
 
