@@ -7,6 +7,16 @@ results without leaving whatever app you're in.
 Default trigger is **double-tap Right ⌥**, and it's rebindable to anything —
 see below.
 
+<p align="center">
+  <video src="https://github.com/emonsaqibh/flyby/releases/download/v0.5.0/flyby-trailer-v3.mp4" poster="docs/assets/trailer-poster.png" controls="controls" width="100%">
+    <a href="https://github.com/emonsaqibh/flyby/releases/download/v0.5.0/flyby-trailer-v3.mp4">
+      <img src="docs/assets/trailer-poster.png" alt="Watch Flyby Trailer" width="100%" />
+    </a>
+  </video>
+  <br />
+  <em>▶ <a href="https://github.com/emonsaqibh/flyby/releases/download/v0.5.0/flyby-trailer-v3.mp4">Watch the Flyby walkthrough (0:58)</a></em>
+</p>
+
 ## Install
 
 ```sh
