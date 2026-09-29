@@ -4,8 +4,12 @@ import Combine
 
 /// The first-launch walkthrough: greet, pick a provider (and connect
 /// Google, if that provider is AI Mode), record the trigger, clear the
-/// Accessibility gate if the trigger needs it, then prove the whole thing
-/// works by actually firing it once.
+/// Accessibility gate if the trigger needs it, prove the whole thing works by
+/// actually firing it once, then meet the screenshot shortcut.
+///
+/// As **What's new**, for an install that finished the walkthrough before
+/// something worth showing arrived, it's just the new steps: the screenshot
+/// shortcut, after the gate when the trigger needs a grant it lacks.
 ///
 /// One step at a time on a glowing aura, with very little text: a headline
 /// that writes itself in, a line under it, and one thing to do. The steps
@@ -14,13 +18,19 @@ import Combine
 struct OnboardingView: View {
     /// In the order they're shown. Which ones are shown is `visibleSteps`.
     enum Step: Int, CaseIterable {
-        case welcome, provider, google, hotkey, accessibility, practice, done
+        case welcome, provider, google, hotkey, accessibility, practice, screenshot, done
+    }
+
+    enum Mode {
+        case walkthrough
+        case whatsNew
     }
 
     static let size = CGSize(width: 760, height: 540)
 
     @ObservedObject private var settings = AppSettings.shared
     @ObservedObject private var google = GoogleSession.shared
+    let mode: Mode
     /// Pauses the live hotkey while the recorder is armed, same as Settings.
     let onRecordingChanged: (Bool) -> Void
     let onFinished: () -> Void
@@ -44,10 +54,21 @@ struct OnboardingView: View {
 
     private let axPoll = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
 
-    init(onRecordingChanged: @escaping (Bool) -> Void, onFinished: @escaping () -> Void) {
+    init(mode: Mode = .walkthrough, onRecordingChanged: @escaping (Bool) -> Void, onFinished: @escaping () -> Void) {
+        self.mode = mode
         self.onRecordingChanged = onRecordingChanged
         self.onFinished = onFinished
-        _step = State(initialValue: OnboardingDebug.initialStep ?? .welcome)
+        let first: Step
+        switch mode {
+        case .walkthrough:
+            first = .welcome
+        case .whatsNew:
+            // The gate first, when the trigger needs a grant it lacks: an
+            // update is where a modifier gesture loses them.
+            if case .keyCombo = AppSettings.shared.shortcut { first = .screenshot }
+            else { first = HotKeyMonitor.hasKeyboardAccess ? .screenshot : .accessibility }
+        }
+        _step = State(initialValue: OnboardingDebug.initialStep ?? first)
     }
 
     var body: some View {
@@ -107,6 +128,8 @@ struct OnboardingView: View {
             AccessibilityStep(isTrusted: axTrusted)
         case .practice:
             PracticeStep(shortcut: settings.shortcut, succeeded: practiceSucceeded)
+        case .screenshot:
+            ScreenshotStep(settings: settings, onRecordingChanged: onRecordingChanged, isNew: mode == .whatsNew)
         case .done:
             DoneStep(settings: settings)
         }
@@ -122,7 +145,8 @@ struct OnboardingView: View {
         case .hotkey:        return 3.0
         case .accessibility: return 3.7
         case .practice:      return 4.5
-        case .done:          return 5.6
+        case .screenshot:    return 5.1
+        case .done:          return 5.8
         }
     }
 
@@ -142,6 +166,8 @@ struct OnboardingView: View {
             // Level with the traffic lights, in the titlebar's own band.
             ProgressCapsules(count: visibleSteps.count, current: visibleSteps.firstIndex(of: step) ?? 0)
                 .padding(.top, 12)
+                // One step has nothing to count.
+                .opacity(visibleSteps.count > 1 ? 1 : 0)
 
             Spacer(minLength: 0)
 
@@ -194,7 +220,7 @@ struct OnboardingView: View {
     }
 
     private var showsBack: Bool {
-        step != .welcome && step != .done
+        step != visibleSteps.first && step != .done
     }
 
     /// The gates advance themselves or are optional; on those the button is
@@ -206,6 +232,7 @@ struct OnboardingView: View {
         case .accessibility where !axTrusted:     return "Skip for Now"
         case .practice where !practiceSucceeded:  return "Skip"
         case .done:                               return "Start Using Flyby"
+        case _ where step == visibleSteps.last:   return "Done"
         default:                                  return "Continue"
         }
     }
@@ -218,13 +245,19 @@ struct OnboardingView: View {
     /// once permission lands, so its capsule doesn't vanish under the user in
     /// the moment before the step moves itself on.
     private var visibleSteps: [Step] {
+        if mode == .whatsNew {
+            var steps: [Step] = []
+            if shapeNeedsAccessibility, !axTrusted || step == .accessibility { steps.append(.accessibility) }
+            steps.append(.screenshot)
+            return steps
+        }
         var steps: [Step] = [.welcome, .provider]
         if settings.provider == .aiMode { steps.append(.google) }
         steps.append(.hotkey)
         if shapeNeedsAccessibility, !axTrusted || step == .accessibility {
             steps.append(.accessibility)
         }
-        steps.append(contentsOf: [.practice, .done])
+        steps.append(contentsOf: [.practice, .screenshot, .done])
         return steps
     }
 
@@ -236,7 +269,7 @@ struct OnboardingView: View {
     // MARK: - Navigation
 
     private func primaryAction() {
-        if step == .done {
+        if step == visibleSteps.last {
             onFinished()
         } else {
             advance()
@@ -344,6 +377,7 @@ extension OnboardingView {
     /// app delegate owns its lifetime: it positions it, keeps it, and hears
     /// it close.
     static func makeWindow(
+        mode: Mode = .walkthrough,
         onRecordingChanged: @escaping (Bool) -> Void,
         onFinished: @escaping () -> Void
     ) -> NSWindow {
@@ -355,7 +389,7 @@ extension OnboardingView {
         )
         // Never drawn, but it's what VoiceOver, Mission Control and the
         // Window menu call it.
-        window.title = "Welcome to Flyby"
+        window.title = mode == .whatsNew ? "What's New in Flyby" : "Welcome to Flyby"
         // Flyby is a dark product — the overlay has no light mode — so its
         // introduction is dark too, whatever the Mac is set to.
         window.appearance = NSAppearance(named: .darkAqua)
@@ -363,7 +397,7 @@ extension OnboardingView {
         window.titleVisibility = .hidden
         window.isMovableByWindowBackground = true
         let host = NSHostingView(
-            rootView: OnboardingView(onRecordingChanged: onRecordingChanged, onFinished: onFinished)
+            rootView: OnboardingView(mode: mode, onRecordingChanged: onRecordingChanged, onFinished: onFinished)
                 .modifier(OnboardingDebug.AccessibilityOverrides())
         )
         // The canvas runs under the titlebar, so it's the window's whole

@@ -41,7 +41,9 @@ next launch. Flyby notices and offers to move itself; Settings › General keeps
   `/screenshot`) takes a picture of the window you're in — a wave of light
   crosses the screen from the bar as it does — and opens Flyby with it over the
   input. Ask Google AI Mode or Gemini about it; follow-ups can bring a new one.
-  Nothing's sent until you press Return, and chats keep a thumbnail.
+  Nothing's sent until you press Return, and chats keep a thumbnail. Updating
+  shows what's new once, to keep, change or turn off the shortcut; new installs
+  meet it in the walkthrough.
 - **Double-tap and chord shortcuts work on macOS 27,** which gates them behind
   Input Monitoring as well as Accessibility; Flyby now asks for both.
 

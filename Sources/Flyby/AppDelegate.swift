@@ -30,6 +30,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var presentationGeneration = 0
     private var settingsWindow: NSWindow?
     private var onboardingWindow: NSWindow?
+    /// The walkthrough window is showing What's new rather than the
+    /// walkthrough.
+    private var isShowingWhatsNew = false
     private var statusItem: NSStatusItem?
     private var accessibilityMenuItem: NSMenuItem?
     private var shortcutProblemMenuItem: NSMenuItem?
@@ -88,6 +91,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         startHotKeys()
         if !AppSettings.shared.hasCompletedOnboarding {
             showOnboarding()
+        } else if AppSettings.shared.needsWhatsNew {
+            showWhatsNew()
         }
         observeCaptureRequests()
         // Nothing of an earlier run's screenshots is kept, and the wave's
@@ -452,9 +457,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self?.installShortcut(promptIfNeeded: false, reportProblems: false)
         }
         // During onboarding the flow owns the permission conversation — no
-        // alert on top of it.
+        // alert on top of it. Nor when What's new is about to show: it asks
+        // for the grants itself.
         let onboarded = AppSettings.shared.hasCompletedOnboarding
-        installShortcut(promptIfNeeded: onboarded, reportProblems: onboarded)
+        let prompts = onboarded && !AppSettings.shared.needsWhatsNew
+        installShortcut(promptIfNeeded: prompts, reportProblems: onboarded)
 
         // Re-install when the user records a different shortcut: the Carbon and
         // event-tap paths aren't interchangeable, so this is a real rebuild.
@@ -1079,6 +1086,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard let target = UserDefaults.standard.string(forKey: "FlybyDebugOpen") else { return }
         if target == "onboarding" {
             showOnboarding()
+        } else if target == "whatsnew" {
+            showWhatsNew()
         } else if target.hasPrefix("settings") {
             if let section = SettingsSection(rawValue: String(target.dropFirst("settings.".count))) {
                 SettingsNavigation.shared.section = section
@@ -1107,8 +1116,35 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         window.makeKeyAndOrderFront(nil)
     }
 
+    /// What's new, once, for an install that finished the walkthrough before
+    /// it: the same window and steps, just the new ones.
+    private func showWhatsNew() {
+        if let onboardingWindow {
+            NSApp.activate()
+            onboardingWindow.makeKeyAndOrderFront(nil)
+            return
+        }
+        let window = OnboardingView.makeWindow(
+            mode: .whatsNew,
+            onRecordingChanged: { [weak self] recording in self?.setRecording(recording) },
+            onFinished: { [weak self] in self?.finishOnboarding() }
+        )
+        window.isReleasedWhenClosed = false
+        window.center()
+        window.delegate = self
+        onboardingWindow = window
+        isShowingWhatsNew = true
+
+        NSApp.activate()
+        window.makeKeyAndOrderFront(nil)
+    }
+
+    /// The walkthrough or What's new, done: either way, what's new has been
+    /// seen.
     private func finishOnboarding() {
         AppSettings.shared.hasCompletedOnboarding = true
+        AppSettings.shared.whatsNewSeen = AppSettings.currentWhatsNew
+        isShowingWhatsNew = false
         onboardingWindow?.orderOut(nil)
         onboardingWindow = nil
         // If the Accessibility gate was skipped, the poll keeps trying and the
@@ -1150,6 +1186,11 @@ extension AppDelegate: NSWindowDelegate {
     func windowWillClose(_ notification: Notification) {
         guard let window = notification.object as? NSWindow else { return }
         if window === onboardingWindow {
+            // Closing What's new counts as seeing it; it doesn't come back.
+            if isShowingWhatsNew {
+                AppSettings.shared.whatsNewSeen = AppSettings.currentWhatsNew
+                isShowingWhatsNew = false
+            }
             onboardingWindow = nil
             setRecording(false)
         }

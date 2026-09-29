@@ -139,6 +139,18 @@ final class AppSettings: ObservableObject {
     @Published var screenshotShortcut: Shortcut? {
         didSet { defaults.set(screenshotShortcut?.storage ?? ["kind": "off"], forKey: "screenshotShortcut") }
     }
+    /// The newest "What's new" this install has seen — the walkthrough counts,
+    /// since it shows the same things. Below `currentWhatsNew` on an install
+    /// that finished onboarding earlier, it's shown once at launch.
+    @Published var whatsNewSeen: Int {
+        didSet { defaults.set(whatsNewSeen, forKey: "whatsNewSeen") }
+    }
+    /// 1: screenshots (0.5).
+    static let currentWhatsNew = 1
+
+    /// Updated from before the latest "What's new".
+    var needsWhatsNew: Bool { hasCompletedOnboarding && whatsNewSeen < Self.currentWhatsNew }
+
     /// A screenshot has worked at least once. When one then can't be taken,
     /// macOS has forgotten the permission — an ad-hoc signed Flyby is a new
     /// app to it after every update — rather than never having been asked.
@@ -216,6 +228,7 @@ final class AppSettings: ObservableObject {
         shortcut = AppSettings.loadShortcut(from: defaults)
         screenshotShortcut = AppSettings.loadScreenshotShortcut(from: defaults)
         hasCapturedScreen = defaults.bool(forKey: "hasCapturedScreen")
+        whatsNewSeen = defaults.integer(forKey: "whatsNewSeen")
         provider = ProviderKind(rawValue: defaults.string(forKey: "provider") ?? "") ?? .browser
         engine = SearchEngine(rawValue: defaults.string(forKey: "engine") ?? "") ?? .google
         geminiModel = AppSettings.loadGeminiModel(from: defaults)
@@ -249,6 +262,7 @@ final class AppSettings: ObservableObject {
         shortcut = .default
         screenshotShortcut = .screenshotDefault
         hasCapturedScreen = false
+        whatsNewSeen = 0
         provider = .browser
         engine = .google
         geminiModel = Self.defaultGeminiModel
@@ -293,6 +307,25 @@ final class AppSettings: ObservableObject {
             return .modifierChord([a, b])
         }
         return .default
+    }
+
+    // MARK: - The two shortcuts
+
+    /// One press can't both open Flyby and take a screenshot. Opening Flyby
+    /// wins: taking the screenshot shortcut's keys turns that one off, which
+    /// the Settings pane and the walkthrough both show — better than refusing
+    /// keys during onboarding, before screenshots have even come up.
+    func setShortcut(_ new: Shortcut) {
+        if new == screenshotShortcut { screenshotShortcut = nil }
+        shortcut = new
+    }
+
+    /// Refused, with false, when `new` is what opens Flyby.
+    @discardableResult
+    func setScreenshotShortcut(_ new: Shortcut?) -> Bool {
+        if let new, new == shortcut { return false }
+        screenshotShortcut = new
+        return true
     }
 
     private static func loadScreenshotShortcut(from defaults: UserDefaults) -> Shortcut? {

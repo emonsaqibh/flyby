@@ -32,7 +32,7 @@ struct ShortcutStep: View {
                 Text("Shortcut")
                     .font(.system(size: 13, weight: .medium))
                     .foregroundStyle(.secondary)
-                ShortcutRecorder(shortcut: $settings.shortcut, onRecordingChanged: onRecordingChanged)
+                ShortcutRecorder(shortcut: settings.shortcutBinding, onRecordingChanged: onRecordingChanged)
                     .frame(width: 260)
             }
             .padding(.horizontal, 16)
@@ -241,6 +241,18 @@ struct DoneStep: View {
             VStack(spacing: 0) {
                 recapRow("Shortcut", badge: IconBadge("keyboard", color: .gray, size: 26)) {
                     MiniKeyCaps(shortcut: settings.shortcut)
+                }
+
+                Divider().padding(.leading, 56)
+
+                recapRow("Screenshot", badge: IconBadge("camera.viewfinder", color: .orange, size: 26)) {
+                    if let shortcut = settings.screenshotShortcut {
+                        MiniKeyCaps(shortcut: shortcut)
+                    } else {
+                        Text("Off")
+                            .font(.system(size: 13))
+                            .foregroundStyle(.secondary)
+                    }
                 }
 
                 Divider().padding(.leading, 56)

@@ -65,33 +65,7 @@ struct ShortcutPane: View {
         .formStyle(.grouped)
     }
 
-    private var screenshotEnabled: Binding<Bool> {
-        Binding(
-            get: { settings.screenshotShortcut != nil },
-            set: { settings.screenshotShortcut = $0 ? .screenshotDefault : nil }
-        )
-    }
-
-    /// The two can't be the same: one press can't both open Flyby and take
-    /// a screenshot.
-    private var mainShortcut: Binding<Shortcut> {
-        Binding(
-            get: { settings.shortcut },
-            set: { new in
-                guard new != settings.screenshotShortcut else { return NSSound.beep() }
-                settings.shortcut = new
-            }
-        )
-    }
-
-    /// Only shown while there is one.
-    private var screenshotShortcut: Binding<Shortcut> {
-        Binding(
-            get: { settings.screenshotShortcut ?? .screenshotDefault },
-            set: { new in
-                guard new != settings.shortcut else { return NSSound.beep() }
-                settings.screenshotShortcut = new
-            }
-        )
-    }
+    private var screenshotEnabled: Binding<Bool> { settings.screenshotEnabledBinding }
+    private var mainShortcut: Binding<Shortcut> { settings.shortcutBinding }
+    private var screenshotShortcut: Binding<Shortcut> { settings.screenshotShortcutBinding }
 }
