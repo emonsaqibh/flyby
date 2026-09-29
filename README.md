@@ -35,7 +35,7 @@ randomised read-only mount (App Translocation), so both silently break on the
 next launch. Flyby notices and offers to move itself; Settings › General keeps a
 **Move to Applications** button around until it's somewhere real.
 
-## What's new in 0.5 (beta)
+## What's new in 0.5
 
 - **Ask about your screen:** ⌥⇧Space (or **Screenshot** under the bar, or
   `/screenshot`) takes a picture of the window you're in — a wave of light
@@ -47,7 +47,7 @@ next launch. Flyby notices and offers to move itself; Settings › General keeps
 - **Double-tap and chord shortcuts work on macOS 27,** which gates them behind
   Input Monitoring as well as Accessibility; Flyby now asks for both.
 
-Full notes: [docs/releases/0.5.0-beta.1.md](docs/releases/0.5.0-beta.1.md).
+Full notes: [docs/releases/0.5.0.md](docs/releases/0.5.0.md).
 
 ## What's new in 0.4
 
