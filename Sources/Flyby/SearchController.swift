@@ -176,7 +176,10 @@ final class SearchController: ObservableObject {
     /// turn, answered afresh, so the question stays where it is.
     func retry() {
         guard !submittedQuery.isEmpty, let provider = activeProvider else { return }
-        run(submittedQuery, with: provider, asTurn: liveTurnID, screenshot: screenshots[liveTurnID])
+        let screenshot = screenshots[liveTurnID] ?? liveAttachment.map(Screenshot.init(restoring:))
+        // Put back over the input when the turn failed; it goes with the retry.
+        if pendingScreenshot?.id == screenshot?.id { pendingScreenshot = nil }
+        run(submittedQuery, with: provider, asTurn: liveTurnID, screenshot: screenshot)
     }
 
     /// Freezes the answer as it stands.
@@ -475,10 +478,17 @@ final class SearchController: ObservableObject {
             // otherwise (a chat from Recent Chats, a page that failed or was
             // left, a turn another provider answered) the search's query
             // carries the conversation. The bubble and history keep `q`.
+            //
+            // A search can't reach Google's conversation, so it takes the
+            // chat's latest screenshot along with the earlier questions.
             if earlierTurns.isEmpty {
                 aiMode.search(q, attaching: screenshot)
             } else {
-                aiMode.followUp(q, attaching: screenshot, orSearch: AIModeFollowUp.query(q, after: earlierTurns))
+                aiMode.followUp(
+                    q, attaching: screenshot,
+                    orSearch: AIModeFollowUp.query(q, after: earlierTurns),
+                    carrying: screenshot ?? latestScreenshot
+                )
             }
         case .gemini:
             startGemini(
@@ -529,6 +539,16 @@ final class SearchController: ObservableObject {
         )
     }
 
+    /// The chat's most recent screenshot before the live turn: at full size
+    /// from this session, or the thumbnail from history.
+    private var latestScreenshot: Screenshot? {
+        for turn in earlierTurns.reversed() {
+            if let screenshot = screenshots[turn.id] { return screenshot }
+            if let attachment = turn.attachment { return Screenshot(restoring: attachment) }
+        }
+        return nil
+    }
+
     private func archiveLiveTurn() {
         if let turn = liveTurn { earlierTurns.append(turn) }
     }
@@ -568,11 +588,20 @@ final class SearchController: ObservableObject {
         phase = .idle
     }
 
-    /// Saved as each turn settles, so a crash or a quit loses nothing.
+    /// Saved as each turn settles, so a crash or a quit loses nothing. A
+    /// question that failed with a screenshot puts it back over the input,
+    /// so it can be asked again — of another provider, say.
     private func turnDidSettle() {
         switch phase {
-        case .complete, .failed: saveConversation()
-        default: break
+        case .complete:
+            saveConversation()
+        case .failed:
+            saveConversation()
+            if pendingScreenshot == nil, let screenshot = screenshots[liveTurnID] {
+                pendingScreenshot = screenshot
+            }
+        default:
+            break
         }
     }
 

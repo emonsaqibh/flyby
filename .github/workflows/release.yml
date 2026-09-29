@@ -65,6 +65,12 @@ jobs:
           XCODE=$(ls -d /Applications/Xcode_*.app | grep -viE 'beta|release_candidate|_rc' | sort -V | tail -1)
           sudo xcode-select -s "$XCODE"
           xcodebuild -version
+          # xcrun on this image resolves the default SDK to a Command Line
+          # Tools SDK that isn't installed (see ci.yml); name Xcode's.
+          unset SDKROOT
+          SDKROOT="$(xcrun --sdk macosx --show-sdk-path)"
+          export SDKROOT
+          echo "SDKROOT=$SDKROOT" >> "$GITHUB_ENV"
           SDK=$(xcrun --show-sdk-version); OS=$(sw_vers -productVersion)
           [[ "${SDK%%.*}" -ge 27 && "${OS%%.*}" -ge 27 ]] || { echo "::error::needs Xcode 27 on macOS 27 (SDK $SDK, macOS $OS)"; exit 1; }
 

@@ -33,6 +33,8 @@ struct ShortcutRecorder: View {
     @State private var pendingTapTime = Date.distantPast
     /// Why the last attempt was refused, shown under the field.
     @State private var hint: String?
+    /// Tells this recorder from any other on screen: one records at a time.
+    @State private var recorderID = UUID()
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
@@ -75,6 +77,9 @@ struct ShortcutRecorder: View {
         )
         .onAppear(perform: startRecordingIfDebugging)
         .onDisappear { setRecording(false) }
+        .onReceive(NotificationCenter.default.publisher(for: .flybyRecorderDidStart)) { note in
+            if (note.object as? UUID) != recorderID { setRecording(false) }
+        }
     }
 
     /// A field-shaped control, like the shortcut fields in System Settings:
@@ -181,6 +186,9 @@ struct ShortcutRecorder: View {
         hint = nil
         guard recording != isRecording else { return }
         isRecording = recording
+        if recording {
+            NotificationCenter.default.post(name: .flybyRecorderDidStart, object: recorderID)
+        }
         onRecordingChanged(recording)
     }
 
@@ -377,4 +385,9 @@ private struct KeyCaptureView: NSViewRepresentable {
             return Set(TriggerKey.allCases.filter { (raw & $0.rawValue) != 0 })
         }
     }
+}
+
+extension Notification.Name {
+    /// A shortcut recorder started listening; any other stops.
+    static let flybyRecorderDidStart = Notification.Name("flybyRecorderDidStart")
 }

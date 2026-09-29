@@ -172,6 +172,11 @@ final class CaptureWave: NSObject, MTKViewDelegate {
         window.orderFrontRegardless()
         start = CACurrentMediaTime()
         view.isPaused = false
+        // The frames end it. Should they stop coming — the app hidden
+        // mid-wave, no drawable — this does, so a frozen screen can't linger.
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.duration + Self.fadeOut + 0.5) { [weak self] in
+            self?.finish(immediately: true)
+        }
     }
 
     private func finish(immediately: Bool) {

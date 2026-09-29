@@ -35,6 +35,18 @@ randomised read-only mount (App Translocation), so both silently break on the
 next launch. Flyby notices and offers to move itself; Settings › General keeps a
 **Move to Applications** button around until it's somewhere real.
 
+## What's new in 0.5 (beta)
+
+- **Ask about your screen:** ⌥⇧Space (or **Screenshot** under the bar, or
+  `/screenshot`) takes a picture of the window you're in — a wave of light
+  crosses the screen from the bar as it does — and opens Flyby with it over the
+  input. Ask Google AI Mode or Gemini about it; follow-ups can bring a new one.
+  Nothing's sent until you press Return, and chats keep a thumbnail.
+- **Double-tap and chord shortcuts work on macOS 27,** which gates them behind
+  Input Monitoring as well as Accessibility; Flyby now asks for both.
+
+Full notes: [docs/releases/0.5.0-beta.1.md](docs/releases/0.5.0-beta.1.md).
+
 ## What's new in 0.4
 
 - **Looks like macOS 27's Siri:** an always-dark glass bar at the bottom of the
@@ -56,7 +68,8 @@ Full notes: [docs/releases/0.4.0.md](docs/releases/0.4.0.md).
 
 First launch opens a short, animated onboarding (always dark, Dia-style: a
 drifting glow, headlines that reveal letter by letter, a live demo of the bar):
-provider, shortcut, the Accessibility grant if the shortcut needs one, and a
+provider, shortcut, the Accessibility and Input Monitoring grants if the
+shortcut needs them, and a
 practice step that waits for the real trigger to fire. It runs once (gated by a
 `hasCompletedOnboarding` flag; installs that already recorded a shortcut skip
 it) and everything it covers can be changed later in Settings.
@@ -75,8 +88,10 @@ three different shapes of shortcut.
   again.
 
 The two modifier-only shapes need a `CGEventTap` and therefore Accessibility
-permission — `RegisterEventHotKey` can't express "no key", and can't tell
-Right ⌘ from Left ⌘ either. The tap is listen-only and subscribes to
+and Input Monitoring — `RegisterEventHotKey` can't express "no key", and can't
+tell Right ⌘ from Left ⌘ either. (On macOS 27 a listen-only tap without Input
+Monitoring is created and then quietly switched off, even though it only hears
+modifier changes.) The tap is listen-only and subscribes to
 `flagsChanged` events exclusively, never key presses; a double-tap counts only
 if each strike is brief (≤0.4 s) and the second lands within 0.35 s of the
 first, which is also what keeps ⌥-symbol typing and option-drags from
@@ -87,9 +102,10 @@ A bare key with no modifiers is rejected, since it would fire while you type.
 Esc cancels recording rather than becoming your shortcut.
 
 **If the shortcut ever stops working**, the menu bar icon turns into a warning
-triangle and grows a "Grant Accessibility Permission…" item. That only ever
-applies to modifier-only gestures — if you'd rather not deal with the
-permission, record a key combo instead.
+triangle and grows an "Allow Your Shortcut…" item, which opens whichever of
+the two panes still needs Flyby. That only ever applies to modifier-only
+gestures — if you'd rather not deal with the permissions, record a key combo
+instead.
 
 ## Build and run
 
@@ -120,19 +136,24 @@ for a bare `swift build` or `swift test`, prefix
 Every push runs CI on a macOS 27 runner with Xcode 27 — unit tests, the dev
 build, and an Apple silicon release build — and attaches both apps to the run.
 
-**Accessibility permission is only needed for modifier-only shortcuts** (see
-Trigger above). If you use one, onboarding walks you through the grant; approve
-it in System Settings › Privacy & Security › Accessibility and it starts working
-within a second — the app polls, so no relaunch needed.
+**Accessibility and Input Monitoring are only needed for modifier-only
+shortcuts** (see Trigger above). If you use one, onboarding walks you through
+both; approve Flyby in System Settings › Privacy & Security › Accessibility
+and › Input Monitoring. The app polls, so Accessibility takes effect within a
+second; after Input Monitoring macOS may ask to reopen it. Screenshots need
+**Screen Recording**, which macOS asks for the first time you take one.
 
-Because local builds are ad-hoc signed, the signature changes on every rebuild,
-so macOS drops that permission after each `./build.sh`. Remove **Flyby Dev**
-with the − button and add it back. Key-combo shortcuts are immune to all of this.
+macOS keys those grants to the app's signature. An ad-hoc signature changes on
+every build, so run `./scripts/dev-signing.sh` once: it makes a local signing
+certificate (one password prompt, to trust it for code signing) that
+`build.sh` then signs Flyby Dev with, and the grants survive rebuilds. Without
+it, remove **Flyby Dev** from each list with the − button after a rebuild and
+add it back. Key-combo shortcuts need none of this.
 
 To see what the app is doing:
 
 ```bash
-log show --last 5m --info --predicate 'subsystem == "com.fringecore.flyby"' --style compact
+/usr/bin/log show --last 5m --info --predicate 'subsystem == "com.fringecore.flyby"' --style compact
 ```
 
 Art is generated, not drawn by hand: `Resources/AppIcon.icns` (and the dev

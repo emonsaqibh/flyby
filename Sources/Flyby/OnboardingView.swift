@@ -29,7 +29,7 @@ struct OnboardingView: View {
 
     @State private var step: Step
     @State private var direction: OnboardingDirection = .forward
-    @State private var axTrusted = HotKeyMonitor.isTrusted
+    @State private var axTrusted = HotKeyMonitor.hasKeyboardAccess
     @State private var practiceSucceeded = false
     /// When the practice shortcut last fired, for the aura's burst of light.
     @State private var celebratedAt: Date?
@@ -269,8 +269,10 @@ struct OnboardingView: View {
 
     // MARK: - Accessibility gate
 
+    /// Accessibility and Input Monitoring both: a modifier-only gesture
+    /// needs the two.
     private var isTrusted: Bool {
-        HotKeyMonitor.isTrusted || debugTrusted
+        HotKeyMonitor.hasKeyboardAccess || debugTrusted
     }
 
     private func pollAccessibility() {

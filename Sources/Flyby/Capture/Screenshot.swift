@@ -18,7 +18,6 @@ struct Screenshot: Identifiable, Equatable {
 
     let attachment: Attachment
     let upload: Data
-    let pixelSize: CGSize
 
     var id: UUID { attachment.id }
     var title: String { attachment.title }
@@ -36,7 +35,13 @@ struct Screenshot: Identifiable, Equatable {
         }
         self.attachment = Attachment(title: title, thumbnail: thumbnail)
         self.upload = upload
-        self.pixelSize = CGSize(width: image.width, height: image.height)
+    }
+
+    /// A chat reopened from history has only the thumbnail; asked again, it
+    /// stands in for the picture — small, but what the question was about.
+    init(restoring attachment: Attachment) {
+        self.attachment = attachment
+        self.upload = attachment.thumbnail
     }
 
     /// Dev builds' `-FlybyDebugImage`: a picture from disk standing in for a

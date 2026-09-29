@@ -489,33 +489,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     /// The screenshot shortcut is quieter about trouble than the main one:
     /// nothing in the menu bar and no alert of its own — macOS's own
-    /// Accessibility prompt, once a launch, when it's a modifier-only gesture
-    /// that needs it (not during onboarding, which owns that conversation);
+    /// Accessibility and Input Monitoring prompts, once a launch, when it's a
+    /// modifier-only gesture that needs them (not during onboarding, which owns that conversation);
     /// a poll that brings it up once the grant arrives; and word when a combo
     /// the user just recorded is taken.
     private func installScreenshotShortcut(reportProblems: Bool) {
         screenshotPermissionPoll?.cancel()
         screenshotPermissionPoll = nil
-        var status = screenshotHotKeys.reload()
-        // A listen-only tap installs without the grant, then goes quiet;
-        // better to wait for the grant than to install one that can't work.
-        if status == .active, screenshotHotKeys.requiresAccessibility, !HotKeyMonitor.isTrusted {
-            screenshotHotKeys.stop()
-            status = .needsAccessibility
-        }
-        switch status {
+        switch screenshotHotKeys.reload() {
         case .active, .paused, .off:
             break
         case .needsAccessibility:
             if !hasAskedForScreenshotAccessibility, AppSettings.shared.hasCompletedOnboarding {
                 hasAskedForScreenshotAccessibility = true
-                HotKeyMonitor.ensureAccessibilityPermission()
+                HotKeyMonitor.requestKeyboardAccess()
             }
             screenshotPermissionPoll = Task { @MainActor [weak self] in
                 while !Task.isCancelled {
                     try? await Task.sleep(nanoseconds: 1_000_000_000)
                     guard !Task.isCancelled, let self else { return }
-                    if self.screenshotHotKeys.isPaused || !HotKeyMonitor.isTrusted { continue }
+                    if self.screenshotHotKeys.isPaused || !HotKeyMonitor.hasKeyboardAccess { continue }
                     if self.screenshotHotKeys.reload() != .needsAccessibility { return }
                 }
             }
@@ -559,10 +552,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         case .needsAccessibility:
             // Only a modifier-only gesture can fail this way, and only for want
-            // of Accessibility permission.
+            // of Accessibility or Input Monitoring.
             updateStatusItem(.needsAccessibility)
             if promptIfNeeded {
-                HotKeyMonitor.ensureAccessibilityPermission()
+                HotKeyMonitor.requestKeyboardAccess()
                 presentAccessibilityAlert()
             }
             startPermissionPoll()
@@ -621,16 +614,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // By the bundle's own name: the dev build is listed as "Flyby Dev".
         let name = BuildFlavor.appName
         let alert = NSAlert()
-        alert.messageText = "\(name) needs Accessibility permission"
+        alert.messageText = "\(name) needs permission to see your shortcut"
         alert.informativeText = """
-        Your shortcut is a modifier-only gesture, which macOS will only deliver \
-        through an Accessibility-gated event tap.
+        Your shortcut is a modifier-only gesture, and macOS only shares those \
+        with apps approved twice, in System Settings › Privacy & Security:
 
-        Approve “\(name)” in System Settings › Privacy & Security › \
-        Accessibility. It starts working within a second — no relaunch needed.
+        • Accessibility
+        • Input Monitoring
+
+        Turn on “\(name)” in both. Accessibility takes effect within a second; \
+        after Input Monitoring, macOS may ask to reopen \(name).
 
         If it's already listed, remove it with the − button and add it again: \
-        rebuilding changes the app's signature and invalidates the old entry.
+        an update changes the app's signature and invalidates the old entry.
 
         You can also avoid this entirely by recording a shortcut that includes \
         a regular key, like ⌥Space — those need no permission at all.
@@ -641,7 +637,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         NSApp.activate()
         if alert.runModal() == .alertFirstButtonReturn {
-            HotKeyMonitor.openAccessibilitySettings()
+            HotKeyMonitor.openKeyboardAccessSettings()
         }
     }
 
@@ -739,6 +735,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         waveGeneration += 1
         let generation = waveGeneration
         let resting = NSWindow.Level.floating
+        // Lifted first: a wave that can't play finishes before `play` returns.
+        panel.level = NSWindow.Level(rawValue: NSWindow.Level.screenSaver.rawValue + 1)
         CaptureWave.play(
             over: capture.screen, showing: capture.display,
             from: FlybyPanel.barCenter(on: capture.screen), focus: capture.windowFrame,
@@ -747,7 +745,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             guard let self, generation == self.waveGeneration else { return }
             self.panel.level = resting
         }
-        panel.level = NSWindow.Level(rawValue: NSWindow.Level.screenSaver.rawValue + 1)
     }
 
     // MARK: - Showing and hiding
@@ -909,7 +906,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         case .needsAccessibility:
             return NSImage(
                 systemSymbolName: "exclamationmark.triangle",
-                accessibilityDescription: "Flyby — needs Accessibility permission"
+                accessibilityDescription: "Flyby — needs permission for its shortcut"
             )
         case .unavailable:
             return NSImage(
@@ -925,7 +922,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         let menu = NSMenu()
         let permissionItem = NSMenuItem(
-            title: "Grant Accessibility Permission…",
+            title: "Allow Your Shortcut…",
             action: #selector(openAccessibilitySettings),
             keyEquivalent: ""
         )
@@ -977,8 +974,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc private func openAccessibilitySettings() {
-        HotKeyMonitor.ensureAccessibilityPermission()
-        HotKeyMonitor.openAccessibilitySettings()
+        HotKeyMonitor.requestKeyboardAccess()
+        HotKeyMonitor.openKeyboardAccessSettings()
     }
 
     // MARK: - Updates

@@ -22,7 +22,8 @@ final class HotKeyMonitor {
         case active
         /// Deliberately off while the recorder has the keyboard.
         case paused
-        /// A modifier-only gesture, and no Accessibility grant to watch for it.
+        /// A modifier-only gesture, without the grants to watch for it:
+        /// Accessibility, or Input Monitoring (`hasKeyboardAccess`).
         case needsAccessibility
         /// A key combo macOS wouldn't register — usually because another app
         /// already owns it. Polling won't fix that; a different combo will.
@@ -131,6 +132,12 @@ final class HotKeyMonitor {
             return status
 
         case .modifierChord, .doubleTap:
+            // Not a tap that can't work: without both grants macOS creates it
+            // and then switches it off. The owner polls until they're there.
+            guard Self.hasKeyboardAccess else {
+                Self.log.info("event tap waiting: trusted=\(Self.isTrusted, privacy: .public) listen=\(Self.canListen, privacy: .public)")
+                return .needsAccessibility
+            }
             let ok = installEventTap()
             Self.log.notice("""
             event tap installed=\(ok, privacy: .public) \
@@ -228,7 +235,7 @@ final class HotKeyMonitor {
         return .active
     }
 
-    // MARK: - Event tap (chords and double-taps, needs Accessibility)
+    // MARK: - Event tap (chords and double-taps, needs Accessibility and Input Monitoring)
 
     private func installEventTap() -> Bool {
         let callback: CGEventTapCallBack = { _, type, event, refcon in
@@ -276,23 +283,16 @@ final class HotKeyMonitor {
 
     private func checkTapHealth() {
         guard let tap else { return }
-        if Self.isTrusted, CGEvent.tapIsEnabled(tap: tap) { return }
+        if Self.hasKeyboardAccess, CGEvent.tapIsEnabled(tap: tap) { return }
 
-        // Still trusted but switched off: macOS gave up on it for some reason
+        // Still allowed but switched off: macOS gave up on it for some reason
         // the disabled-by events didn't cover. One more try.
-        if Self.isTrusted {
+        if Self.hasKeyboardAccess {
             CGEvent.tapEnable(tap: tap, enable: true)
             if CGEvent.tapIsEnabled(tap: tap) { return }
         }
 
         Self.log.error("event tap lost trusted=\(Self.isTrusted, privacy: .public) listen=\(Self.canListen, privacy: .public); stopping")
-        // Trusted, and switched off anyway: on current macOS a listen-only
-        // tap needs Input Monitoring too. Asked for once a launch.
-        if Self.isTrusted, !Self.canListen, !Self.hasAskedToListen {
-            Self.hasAskedToListen = true
-            Self.log.notice("asking for Input Monitoring")
-            CGRequestListenEventAccess()
-        }
         stop()
         onAccessibilityLost?()
     }
@@ -389,7 +389,28 @@ final class HotKeyMonitor {
 
     /// Input Monitoring: whether this process may listen to the keyboard.
     nonisolated static var canListen: Bool { CGPreflightListenEventAccess() }
-    private static var hasAskedToListen = false
+
+    /// Everything a modifier-only gesture needs: Accessibility, and on
+    /// macOS 27 Input Monitoring too, even for a tap that only hears
+    /// modifier changes — without it the tap is created, then switched off
+    /// within moments.
+    nonisolated static var hasKeyboardAccess: Bool { isTrusted && canListen }
+
+    /// macOS's own prompt for whichever of the two is missing. Each shows
+    /// once per app; after that only System Settings changes the answer.
+    nonisolated static func requestKeyboardAccess() {
+        if !isTrusted { ensureAccessibilityPermission() }
+        if !canListen { CGRequestListenEventAccess() }
+    }
+
+    /// The pane that still needs Flyby: Accessibility, then Input Monitoring.
+    static func openKeyboardAccessSettings() {
+        guard isTrusted else { return openAccessibilitySettings() }
+        guard let url = URL(string:
+            "x-apple.systempreferences:com.apple.preference.security?Privacy_ListenEvent"
+        ) else { return }
+        NSWorkspace.shared.open(url)
+    }
 
     /// Prompts for Accessibility access if we don't have it yet.
     @discardableResult

@@ -68,21 +68,21 @@ struct AccessibilityStep: View {
     var body: some View {
         VStack(spacing: 0) {
             StepHeader(
-                title: "One permission to grant",
+                title: "Two switches to flip",
                 subtitle: "macOS only shares modifier-only gestures with apps you approve."
             )
 
             VStack(alignment: .leading, spacing: 14) {
-                HStack(spacing: 14) {
-                    IconBadge("accessibility", color: .blue, size: 44)
-                    VStack(alignment: .leading, spacing: 3) {
-                        Text("Turn on Flyby under Accessibility")
-                            .font(.system(size: 14, weight: .semibold))
-                        Text("System Settings › Privacy & Security › Accessibility")
-                            .font(.system(size: 12))
-                            .foregroundStyle(.secondary)
-                    }
-                }
+                grant(
+                    symbol: "accessibility", color: .blue,
+                    title: "Turn on Flyby under Accessibility",
+                    path: "System Settings › Privacy & Security › Accessibility"
+                )
+                grant(
+                    symbol: "keyboard", color: .indigo,
+                    title: "And under Input Monitoring",
+                    path: "Same place, a little further down. macOS may ask to reopen Flyby."
+                )
 
                 Divider()
 
@@ -91,8 +91,8 @@ struct AccessibilityStep: View {
                     Spacer(minLength: 8)
                     if !isTrusted {
                         Button("Open System Settings") {
-                            HotKeyMonitor.ensureAccessibilityPermission()
-                            HotKeyMonitor.openAccessibilitySettings()
+                            HotKeyMonitor.requestKeyboardAccess()
+                            HotKeyMonitor.openKeyboardAccessSettings()
                         }
                         .buttonStyle(.glass)
                         .transition(SoftSwapTransition())
@@ -112,7 +112,20 @@ struct AccessibilityStep: View {
         .animation(.spring(duration: 0.5, bounce: 0.25), value: isTrusted)
     }
 
-    /// Waiting, then — the moment permission lands — a check that draws
+    private func grant(symbol: String, color: Color, title: String, path: String) -> some View {
+        HStack(spacing: 14) {
+            IconBadge(symbol, color: color, size: 44)
+            VStack(alignment: .leading, spacing: 3) {
+                Text(title)
+                    .font(.system(size: 14, weight: .semibold))
+                Text(path)
+                    .font(.system(size: 12))
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    /// Waiting, then — the moment both grants land — a check that draws
     /// itself in.
     @ViewBuilder
     private var status: some View {

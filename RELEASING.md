@@ -23,7 +23,12 @@ side by side, and nothing you do in Flyby Dev can touch the installed release.
 ./run.sh                 # build Flyby Dev and launch it
 CONF=debug ./build.sh    # unoptimized, for lldb
 swift test               # FlybyCore unit tests
+./scripts/dev-signing.sh # once per Mac: a local certificate for dev builds
 ```
+
+With the certificate, Flyby Dev keeps its Screen Recording, Accessibility and
+Input Monitoring grants across rebuilds; ad-hoc signed, it loses them every
+time. Only dev builds on that Mac use it — CI and releases are unaffected.
 
 Building needs Xcode 27 (`build.sh` uses it even when `xcode-select` points at
 the Command Line Tools, which can't build macOS 27 SwiftUI). For a bare

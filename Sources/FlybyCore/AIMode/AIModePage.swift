@@ -64,6 +64,16 @@ public enum AIModePage {
         return host.hasPrefix("www.google.") || host.hasPrefix("google.")
     }
 
+    /// AI Mode with nothing asked yet: `/search` with `udm=50` and no query
+    /// (`AIModeQuery.startURL`), where a question with a screenshot is asked.
+    public static func isStartPage(_ url: URL) -> Bool {
+        guard isResultsPage(url),
+              let items = URLComponents(url: url, resolvingAgainstBaseURL: true)?.queryItems else { return false }
+        let q = items.first { $0.name == "q" }?.value ?? ""
+        return items.contains { $0.name == "udm" && $0.value == "50" }
+            && q.trimmingCharacters(in: .whitespaces).isEmpty
+    }
+
     /// A Google search results page — where a solved CAPTCHA or an accepted
     /// consent wall sends the user back to.
     public static func isResultsPage(_ url: URL) -> Bool {

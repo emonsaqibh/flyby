@@ -35,13 +35,13 @@ struct ShortcutPane: View {
             Section {
                 LabeledContent("Record a new shortcut") {
                     ShortcutRecorder(
-                        shortcut: $settings.shortcut,
+                        shortcut: mainShortcut,
                         onRecordingChanged: onRecordingChanged
                     )
                     .frame(width: 210)
                 }
             } footer: {
-                Text("Click, then press a key with modifiers for a combo like ⌥Space, hold two or more modifiers and let go for a chord, or tap one modifier twice for a double-tap. Key combos need no permissions; chords and double-taps need Accessibility.")
+                Text("Click, then press a key with modifiers for a combo like ⌥Space, hold two or more modifiers and let go for a chord, or tap one modifier twice for a double-tap. Key combos need no permissions; chords and double-taps need Accessibility and Input Monitoring.")
             }
 
             Section {
@@ -72,11 +72,26 @@ struct ShortcutPane: View {
         )
     }
 
+    /// The two can't be the same: one press can't both open Flyby and take
+    /// a screenshot.
+    private var mainShortcut: Binding<Shortcut> {
+        Binding(
+            get: { settings.shortcut },
+            set: { new in
+                guard new != settings.screenshotShortcut else { return NSSound.beep() }
+                settings.shortcut = new
+            }
+        )
+    }
+
     /// Only shown while there is one.
     private var screenshotShortcut: Binding<Shortcut> {
         Binding(
             get: { settings.screenshotShortcut ?? .screenshotDefault },
-            set: { settings.screenshotShortcut = $0 }
+            set: { new in
+                guard new != settings.shortcut else { return NSSound.beep() }
+                settings.screenshotShortcut = new
+            }
         )
     }
 }

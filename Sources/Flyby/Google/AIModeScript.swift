@@ -1009,11 +1009,12 @@ enum AIModeScript {
   }
 
   // A picture left in the composer by an attempt that didn't send would go
-  // with the next question. A chip reads "Remove …" once hovered, and a
-  // click then takes it off.
+  // with the next one. Only chips shaped like Google's own previews — a
+  // titled button holding an image — so nothing else in the composer is
+  // clicked. A chip reads "Remove …" once hovered, and a click takes it off.
   async function clearAttachments(plate) {
     for (var n = 0; n < 5; n++) {
-      var img = plate.querySelector('[role="button"] img');
+      var img = plate.querySelector('[role="button"][title] img');
       if (!img) return;
       var chip = img.closest('[role="button"]');
       chip.dispatchEvent(new PointerEvent('pointerover', { bubbles: true }));
@@ -1119,11 +1120,11 @@ enum AIModeScript {
       return now.turns > base.turns || now.mains > base.mains;
     }
 
-    // Nothing from an attempt that never sent rides along; then the
-    // picture, as a user adds it before typing.
-    await clearAttachments(plate);
+    // With a picture: nothing from an attempt that never sent rides along,
+    // then the picture, as a user adds it before typing.
     var attached = null;
     if (opts.image) {
+      await clearAttachments(plate);
       attached = await attach(plate, opts);
       if (attached.indexOf('attached') !== 0) return attached;
       if (F.stopped) return 'stopped';

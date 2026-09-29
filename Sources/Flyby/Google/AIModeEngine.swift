@@ -221,12 +221,16 @@ final class AIModeEngine: ObservableObject {
     /// The caller has to know the page's conversation is this chat's: every
     /// way of leaving a chat (`reset()`, and `stop()` when another provider
     /// takes a turn) ends it here too.
-    func followUp(_ question: String, attaching screenshot: Screenshot? = nil, orSearch fallback: String) {
+    ///
+    /// `carried` goes with the search when it comes to that: the chat's
+    /// latest screenshot, if this question has none of its own.
+    func followUp(_ question: String, attaching screenshot: Screenshot? = nil, orSearch fallback: String, carrying carried: Screenshot? = nil) {
         let trimmed = question.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
+        let forSearch = screenshot ?? carried
         guard canContinueOnPage else {
             aiModeLog.info("Follow-up: no conversation on the page to continue; searching with it in the query")
-            search(fallback, attaching: screenshot)
+            search(fallback, attaching: forSearch)
             return
         }
 
@@ -242,14 +246,19 @@ final class AIModeEngine: ObservableObject {
         snapshot = .empty
         transition(to: .loading)
         armStallTimer()
-        askOnPage(trimmed, attaching: screenshot, onFreshPage: false, fallback: fallback)
+        askOnPage(trimmed, attaching: screenshot, onFreshPage: false, fallback: fallback, fallbackAttaching: forSearch)
     }
 
     /// Types `question` into the composer — after attaching the screenshot,
     /// if there is one — and sends it. When the page won't take it, a
-    /// follow-up is asked as a search for `fallback`; a question asked on a
-    /// fresh start page (no `fallback`) has nowhere else to go, and fails.
-    private func askOnPage(_ question: String, attaching screenshot: Screenshot?, onFreshPage fresh: Bool, fallback: String?) {
+    /// follow-up is asked as a search for `fallback`, with
+    /// `fallbackAttaching`; a question asked on a fresh start page (no
+    /// `fallback`) has nowhere else to go, and fails — unless Google put up a
+    /// wall meanwhile, and then it waits for the page to come back.
+    private func askOnPage(
+        _ question: String, attaching screenshot: Screenshot?, onFreshPage fresh: Bool,
+        fallback: String?, fallbackAttaching: Screenshot? = nil
+    ) {
         pageTurn += 1
         let id = searchID
         let turn = pageTurn
@@ -288,17 +297,26 @@ final class AIModeEngine: ObservableObject {
                 aiModeLog.notice("\(what, privacy: .public) was superseded or stopped while being asked (\(result ?? "no result", privacy: .public))")
                 return
             }
-            if result == nil, self.documentsCommitted != document {
+            let sent = result?.hasPrefix("sent") == true
+            if fresh, !sent, self.isAwaitingUser, let screenshot {
+                // A CAPTCHA or consent wall came up mid-ask: once the user is
+                // through and the start page is back, it's asked again.
+                aiModeLog.notice("\(what, privacy: .public) waits for Google's page (\(result ?? "the page moved", privacy: .public))")
+                // Same document: this turn was never asked, so its number is
+                // free again. A new one counts from 0 already.
+                if self.documentsCommitted == document { self.pageTurn -= 1 }
+                self.pendingAsk = (question, screenshot, id)
+            } else if result == nil, self.documentsCommitted != document {
                 // Sending loaded a new document, which took the script with
                 // it; that document answers from its own first turn.
                 aiModeLog.notice("\(what, privacy: .public) sent; the page moved to a new document to answer it")
-                self.armFollowUpTimer(fallback: fallback, attaching: screenshot)
-            } else if let result, result.hasPrefix("sent") {
+                self.armFollowUpTimer(fallback: fallback, attaching: fallbackAttaching)
+            } else if let result, sent {
                 aiModeLog.notice("\(what, privacy: .public) asked in Google's composer (turn \(turn, privacy: .public)): \(result, privacy: .public)")
-                self.armFollowUpTimer(fallback: fallback, attaching: screenshot)
+                self.armFollowUpTimer(fallback: fallback, attaching: fallbackAttaching)
             } else if let fallback {
                 aiModeLog.error("\(what, privacy: .public) couldn't be asked in the page (\(result ?? "no result", privacy: .public)); searching with the conversation in the query")
-                self.search(fallback, attaching: screenshot)
+                self.search(fallback, attaching: fallbackAttaching)
             } else {
                 aiModeLog.error("\(what, privacy: .public) couldn't be asked on the start page (\(result ?? "no result", privacy: .public))")
                 self.fail(screenshot == nil ? "Google's page wouldn't take the question. Try again." : Self.screenshotFailure)
@@ -307,7 +325,7 @@ final class AIModeEngine: ObservableObject {
     }
 
     private static let screenshotFailure =
-        "Google's page wouldn't take the screenshot. Try again, or ask Gemini about it."
+        "Google's page wouldn't take the screenshot. Try again — or switch to Gemini and ask: the screenshot is still over the input."
 
     private func fail(_ message: String) {
         isContinuable = false
@@ -422,6 +440,8 @@ final class AIModeEngine: ObservableObject {
                 if case .needsAttention(let why) = state, why != .unreadable {
                     transition(to: .loading)
                     armStallTimer()
+                    // A wall accepted in place, with no navigation to finish.
+                    askPendingIfReady()
                 }
                 return
             }
@@ -513,14 +533,7 @@ final class AIModeEngine: ObservableObject {
         syncReader(force: true)
         // Re-send the page's state, in case a message raced the commit.
         webView.flybyRun("(function(){var f=window.__flyby;if(f&&f.poke)f.poke();return true;})()", in: Self.contentWorld)
-        // The start page a screenshot question waits for. Not a CAPTCHA or a
-        // consent wall on the way: those hold the question until the user
-        // gets through and the page comes back.
-        if let pending = pendingAsk, pending.searchID == searchID, isSearchActive, !isFrozen, state == .loading {
-            pendingAsk = nil
-            askOnPage(pending.question, attaching: pending.screenshot, onFreshPage: true, fallback: nil)
-            return
-        }
+        if askPendingIfReady() { return }
         guard isSearchActive, !isFrozen, state == .loading, snapshot.isEmpty,
               let url = webView.url, AIModePage.isResultsPage(url) else { return }
         armUnreadableTimer()
@@ -569,6 +582,20 @@ final class AIModeEngine: ObservableObject {
         if !isAwaitingUser {
             NotificationCenter.default.post(name: .quickSearchShouldDismiss, object: nil)
         }
+    }
+
+    /// Asks the question with a screenshot that's waiting for AI Mode's
+    /// start page, once the page on screen is that and done loading — not the
+    /// warm-up page still finishing, nor a CAPTCHA or consent wall, which
+    /// hold the question until the user is through.
+    @discardableResult
+    private func askPendingIfReady() -> Bool {
+        guard let pending = pendingAsk, pending.searchID == searchID, isSearchActive, !isFrozen,
+              state == .loading, !webView.isLoading,
+              let url = webView.url, AIModePage.isStartPage(url) else { return false }
+        pendingAsk = nil
+        askOnPage(pending.question, attaching: pending.screenshot, onFreshPage: true, fallback: nil)
+        return true
     }
 
     // MARK: - Timers

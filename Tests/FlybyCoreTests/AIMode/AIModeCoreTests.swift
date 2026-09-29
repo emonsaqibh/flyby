@@ -30,6 +30,15 @@ import Testing
         #expect(AIModeQuery.startURL(languageCode: nil).absoluteString == "https://www.google.com/search?udm=50")
     }
 
+    @Test func recognisesTheStartPage() {
+        #expect(AIModePage.isStartPage(AIModeQuery.startURL(languageCode: "en")))
+        #expect(AIModePage.isStartPage(URL(string: "https://www.google.de/search?hl=de&udm=50")!))
+        #expect(!AIModePage.isStartPage(AIModeQuery.url(for: "weather", languageCode: "en")))
+        #expect(!AIModePage.isStartPage(URL(string: "https://www.google.com/search?q=x&udm=50")!))
+        #expect(!AIModePage.isStartPage(URL(string: "https://www.google.com/")!))
+        #expect(!AIModePage.isStartPage(URL(string: "https://www.google.com/sorry/index?continue=x")!))
+    }
+
     @Test func homeURL() {
         #expect(AIModeQuery.homeURL(languageCode: "de").absoluteString == "https://www.google.com/?hl=de")
         #expect(AIModeQuery.homeURL(languageCode: nil).absoluteString == "https://www.google.com/")

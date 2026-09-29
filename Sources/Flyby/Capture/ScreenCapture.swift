@@ -9,9 +9,9 @@ private let captureLog = Logger(subsystem: "com.fringecore.flyby", category: "ca
 ///
 /// What's captured is the front window of the app the user was in — just
 /// that window, as if nothing overlapped it, without its shadow. When that
-/// app has none (or it was Flyby itself, from Settings, say), it's the
-/// frontmost ordinary window that isn't Flyby's; with none at all (a bare
-/// desktop), the whole display under the pointer. Alongside it, the display
+/// app has no window, it's the whole display — what the user is looking at;
+/// when there's no app to go by (Flyby itself was in front, from Settings,
+/// say), the frontmost ordinary window that isn't Flyby's. Alongside it, the display
 /// Flyby's bar is on, without anything of Flyby's, for `CaptureWave` to play
 /// over; that picture is never sent anywhere.
 enum ScreenCapture {
@@ -62,7 +62,9 @@ enum ScreenCapture {
             content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
         } catch {
             captureLog.error("Shareable content unavailable: \(error.localizedDescription, privacy: .public)")
-            throw Failure.notAllowed
+            let declined = (error as NSError).domain == SCStreamErrorDomain
+                && (error as NSError).code == SCStreamError.Code.userDeclined.rawValue
+            throw declined ? Failure.notAllowed : Failure.failed(error.localizedDescription)
         }
 
         let window = frontWindow(of: app).flatMap { id in content.windows.first { $0.windowID == id } }
@@ -103,9 +105,10 @@ enum ScreenCapture {
 
     // MARK: - Pieces
 
-    /// The app's frontmost ordinary window, or else the frontmost ordinary
-    /// window of any app but Flyby — from the window server's front-to-back
-    /// list. IDs and bounds need no permission; names would.
+    /// The app's frontmost ordinary window; with no app to go by, the
+    /// frontmost ordinary window of any app but Flyby — from the window
+    /// server's front-to-back list. IDs and bounds need no permission; names
+    /// would.
     private static func frontWindow(of app: NSRunningApplication?) -> CGWindowID? {
         let own = ProcessInfo.processInfo.processIdentifier
         guard let list = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]]
@@ -120,10 +123,11 @@ enum ScreenCapture {
             else { return nil }
             return (pid, number)
         }
-        if let pid = app?.processIdentifier, let mine = candidates.first(where: { $0.pid == pid }) {
-            return mine.id
+        if let app {
+            // Its window or none: another app's would be a surprise.
+            return candidates.first { $0.pid == app.processIdentifier }?.id
         }
-        captureLog.notice("No window of \(app?.localizedName ?? "the previous app", privacy: .public); taking the frontmost other window")
+        captureLog.notice("No previous app; taking the frontmost window")
         return candidates.first?.id
     }
 
