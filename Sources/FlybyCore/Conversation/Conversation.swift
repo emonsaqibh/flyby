@@ -11,6 +11,9 @@ public struct ConversationTurn: Sendable, Hashable, Codable, Identifiable {
     /// Why the turn ended without an answer, when it did.
     public var failure: String?
     public var date: Date
+    /// The screenshot the question was about, if it had one. Absent from
+    /// chats saved before there were screenshots, which still load.
+    public var attachment: Attachment?
 
     public init(
         id: UUID = UUID(),
@@ -18,7 +21,8 @@ public struct ConversationTurn: Sendable, Hashable, Codable, Identifiable {
         provider: String,
         answer: AnswerSnapshot,
         failure: String? = nil,
-        date: Date = Date()
+        date: Date = Date(),
+        attachment: Attachment? = nil
     ) {
         self.id = id
         self.query = query
@@ -26,6 +30,7 @@ public struct ConversationTurn: Sendable, Hashable, Codable, Identifiable {
         self.answer = answer
         self.failure = failure
         self.date = date
+        self.attachment = attachment
     }
 }
 
@@ -91,10 +96,13 @@ public struct ChatMessage: Sendable, Hashable {
 
     public var role: Role
     public var text: String
+    /// A picture the user asked about with this message.
+    public var image: ChatImage?
 
-    public init(role: Role, text: String) {
+    public init(role: Role, text: String, image: ChatImage? = nil) {
         self.role = role
         self.text = text
+        self.image = image
     }
 }
 
@@ -107,16 +115,23 @@ public enum ChatContext {
     /// turns go first when the whole thing would be too long — a follow-up is
     /// nearly always about the last answer or two, and every character is
     /// paid for in latency before the first word comes back.
+    ///
+    /// A question asked about a screenshot carries it again, from `images`
+    /// (by turn) when there is one, or else as its thumbnail — a follow-up
+    /// like "and the second error?" means nothing without the picture.
     public static func messages(
         from turns: [ConversationTurn],
+        images: [UUID: ChatImage] = [:],
         maxTurns: Int = 8,
         maxAnswerCharacters: Int = 4_000,
         maxTotalCharacters: Int = 24_000
     ) -> [ChatMessage] {
-        var pairs: [(question: String, answer: String)] = turns.compactMap { turn in
+        var pairs: [(question: String, answer: String, image: ChatImage?)] = turns.compactMap { turn in
             let answer = turn.answer.bodyText
             guard !answer.isEmpty else { return nil }
-            return (turn.query, truncated(answer, to: maxAnswerCharacters))
+            let image = images[turn.id]
+                ?? turn.attachment.map { ChatImage(data: $0.thumbnail, mimeType: "image/jpeg") }
+            return (turn.query, truncated(answer, to: maxAnswerCharacters), image)
         }
         if pairs.count > maxTurns { pairs.removeFirst(pairs.count - maxTurns) }
         while pairs.count > 1,
@@ -124,7 +139,8 @@ public enum ChatContext {
             pairs.removeFirst()
         }
         return pairs.flatMap { pair in
-            [ChatMessage(role: .user, text: pair.question), ChatMessage(role: .model, text: pair.answer)]
+            [ChatMessage(role: .user, text: pair.question, image: pair.image),
+             ChatMessage(role: .model, text: pair.answer)]
         }
     }
 

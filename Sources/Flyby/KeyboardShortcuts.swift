@@ -17,13 +17,20 @@ enum KeyboardMap {
         var id: String { title }
     }
 
-    static let asking = Group(title: "Ask", shortcuts: [
+    /// With the screenshot shortcut, which the user sets, when there is one.
+    @MainActor static var asking: Group {
+        Group(title: "Ask", shortcuts: askingShortcuts + (AppSettings.shared.screenshotShortcut.map {
+            [Shortcut(keys: $0.displayString, action: "Screenshot the window you're in")]
+        } ?? []))
+    }
+
+    private static let askingShortcuts: [Shortcut] = [
         Shortcut(keys: "↩", action: "Ask, or ask a follow-up"),
         Shortcut(keys: "⌥↩", action: "New line"),
         Shortcut(keys: "⌘↩", action: "Open in your browser"),
         Shortcut(keys: "⌘K", action: "Provider menu"),
         Shortcut(keys: "⌘1 – ⌘4", action: "Switch provider"),
-    ])
+    ]
 
     static let answering = Group(title: "Answer", shortcuts: [
         Shortcut(keys: "⌘.", action: "Stop"),

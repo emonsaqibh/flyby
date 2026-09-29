@@ -43,7 +43,40 @@ struct ShortcutPane: View {
             } footer: {
                 Text("Click, then press a key with modifiers for a combo like ⌥Space, hold two or more modifiers and let go for a chord, or tap one modifier twice for a double-tap. Key combos need no permissions; chords and double-taps need Accessibility.")
             }
+
+            Section {
+                Toggle("Ask about your screen", isOn: screenshotEnabled)
+                if settings.screenshotShortcut != nil {
+                    LabeledContent("Shortcut") {
+                        ShortcutRecorder(
+                            shortcut: screenshotShortcut,
+                            defaultShortcut: .screenshotDefault,
+                            onRecordingChanged: onRecordingChanged
+                        )
+                        .frame(width: 210)
+                    }
+                }
+            } header: {
+                Text("Screenshot")
+            } footer: {
+                Text("Takes a picture of the window you're in and opens \(BuildFlavor.appName) with it attached, to ask Google or Gemini about. The Screenshot button under the bar does the same. Needs Screen Recording permission.")
+            }
         }
         .formStyle(.grouped)
+    }
+
+    private var screenshotEnabled: Binding<Bool> {
+        Binding(
+            get: { settings.screenshotShortcut != nil },
+            set: { settings.screenshotShortcut = $0 ? .screenshotDefault : nil }
+        )
+    }
+
+    /// Only shown while there is one.
+    private var screenshotShortcut: Binding<Shortcut> {
+        Binding(
+            get: { settings.screenshotShortcut ?? .screenshotDefault },
+            set: { settings.screenshotShortcut = $0 }
+        )
     }
 }

@@ -954,18 +954,86 @@ enum AIModeScript {
     box.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: text }));
   }
 
+  // MARK: - Attaching a screenshot
+
+  function fileFrom(opts) {
+    var bytes = atob(opts.image);
+    var array = new Uint8Array(bytes.length);
+    for (var i = 0; i < bytes.length; i++) array[i] = bytes.charCodeAt(i);
+    return new File([array], opts.imageName || 'Screenshot.jpg',
+                    { type: opts.imageType || 'image/jpeg', lastModified: Date.now() });
+  }
+
+  // Pictures drawn around the composer: a page shows one as soon as it has
+  // a file. Counted a level up too, since a preview can sit just above the
+  // plate rather than in it.
+  function previews(plate) {
+    var scope = plate.parentElement || plate;
+    var n = 0;
+    var els = scope.querySelectorAll('img, [style*="background-image"]');
+    for (var i = 0; i < els.length; i++) if (rendered(els[i])) n++;
+    return n;
+  }
+
+  // Puts the screenshot in the composer, trying what a user would do, in
+  // order: Google's own file input (Flyby answers the file picker it opens
+  // with the screenshot — the click has to come before anything is awaited,
+  // or WebKit won't open a picker for it); the file handed to that input
+  // directly; a paste into the composer. Each counts only if a preview
+  // appears. Resolves to 'attached (<how>)' or 'not-attached (<why>)'.
+  async function attach(plate, opts) {
+    var before = previews(plate);
+    function shown() { return previews(plate) > before; }
+    var inputs = Array.prototype.slice.call(document.querySelectorAll('input[type=file]'));
+    inputs.sort(function (a, b) { return (plate.contains(b) ? 1 : 0) - (plate.contains(a) ? 1 : 0); });
+    var input = inputs[0] || null;
+
+    if (input) {
+      try { input.click(); } catch (e) {}
+      if (await waitUntil(shown, 5000)) return 'attached (picker)';
+    }
+    var file = fileFrom(opts);
+    if (input && !F.stopped) {
+      try {
+        var given = new DataTransfer();
+        given.items.add(file);
+        input.files = given.files;
+        input.dispatchEvent(new Event('input', { bubbles: true }));
+        input.dispatchEvent(new Event('change', { bubbles: true }));
+      } catch (e) {}
+      if (await waitUntil(shown, 5000)) return 'attached (input)';
+    }
+    var box = plate.querySelector('textarea');
+    if (box && !F.stopped) {
+      try {
+        var pasted = new DataTransfer();
+        pasted.items.add(file);
+        box.dispatchEvent(new ClipboardEvent('paste', { clipboardData: pasted, bubbles: true, cancelable: true }));
+      } catch (e) {}
+      if (await waitUntil(shown, 5000)) return 'attached (paste)';
+    }
+    return 'not-attached (' + inputs.length + ' file inputs)';
+  }
+
+  // MARK: - Asking in the composer
+
   // Asks `question` in AI Mode's own composer, so Google answers it in this
   // conversation. Resolves to 'sent' once the page has taken it, or to why it
   // couldn't be sent — then Swift asks some other way, and the composer is
   // left empty.
-  F.followUp = async function (question, turn) {
+  //
+  // `opts.fresh`: the page is AI Mode's start page, with no conversation on
+  // it yet. `opts.image` (base64, with `imageName` and `imageType`): a
+  // screenshot to attach before the question is typed.
+  F.followUp = async function (question, turn, opts) {
+    opts = opts || {};
     if (F.stopped) return 'stopped';
     var plate = document.querySelector(PLATE);
     var box = plate && plate.querySelector('textarea');
     var send = plate && plate.querySelector(SEND);
     if (!box || !send) return 'no-composer';
     var before = answerCount();
-    if (!before.turns && !before.mains) return 'no-answer-on-page';
+    if (!opts.fresh && !before.turns && !before.mains) return 'no-answer-on-page';
 
     base = before;
     F.turn = turn;
@@ -985,6 +1053,15 @@ enum AIModeScript {
     // only on the next read; the next read puts it back if it's wanted.
     document.documentElement.removeAttribute(READER_ATTR);
 
+    // The picture first, as a user adds it before typing. Nothing awaited
+    // before this: see attach().
+    var attached = null;
+    if (opts.image) {
+      attached = await attach(plate, opts);
+      if (attached.indexOf('attached') !== 0) return attached;
+      if (F.stopped) return 'stopped';
+    }
+
     // As a user would: into the composer first — Google focuses it after
     // each answer, but a click around the revealed page moves focus
     // elsewhere. Emptied, so a leftover draft can't ride along, then typed;
@@ -995,7 +1072,8 @@ enum AIModeScript {
     await waitUntil(function () { return !ready(send); }, 500);
     typeInto(box, question);
     await sleep(150);
-    await waitUntil(function () { return ready(send); }, 1500);
+    // With a picture, Send waits for its upload.
+    await waitUntil(function () { return ready(send); }, attached ? 15000 : 1500);
     if (F.stopped) return 'stopped';
 
     var how = ready(send) ? 'click' : 'return';
@@ -1015,7 +1093,7 @@ enum AIModeScript {
     if (!sent) {
       typeInto(box, '');
       if (focused) { try { box.blur(); } catch (e) {} }
-      return 'not-sent (' + how + ', send ' + (ready(send) ? 'ready' : 'not ready') + ')';
+      return 'not-sent (' + how + ', send ' + (ready(send) ? 'ready' : 'not ready') + (attached ? ', ' + attached : '') + ')';
     }
     return 'sent';
   };

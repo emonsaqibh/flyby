@@ -27,6 +27,8 @@ final class HotKeyMonitor {
         /// A key combo macOS wouldn't register — usually because another app
         /// already owns it. Polling won't fix that; a different combo will.
         case unavailable(String)
+        /// No shortcut is set: this one's been turned off.
+        case off
     }
 
     var onTrigger: (@MainActor () -> Void)?
@@ -74,9 +76,18 @@ final class HotKeyMonitor {
     private var hotKeyRef: EventHotKeyRef?
     private var handlerRef: EventHandlerRef?
 
-    private var shortcut: Shortcut { AppSettings.shared.shortcut }
+    /// Tells this monitor's Carbon hot key from any other the app has
+    /// registered: every one of them arrives at the same handler.
+    nonisolated let hotKeyNumber: UInt32
+    private let currentShortcut: @MainActor () -> Shortcut?
 
-    init() {}
+    private var shortcut: Shortcut? { currentShortcut() }
+
+    /// The shortcut that opens Flyby, unless told which to watch.
+    init(number: UInt32 = 1, shortcut: @escaping @MainActor () -> Shortcut? = { AppSettings.shared.shortcut }) {
+        hotKeyNumber = number
+        currentShortcut = shortcut
+    }
 
     deinit {
         // The Carbon handler and the tap both hold an unretained pointer to
@@ -91,7 +102,7 @@ final class HotKeyMonitor {
     var requiresAccessibility: Bool {
         switch shortcut {
         case .modifierChord, .doubleTap: return true
-        case .keyCombo:                  return false
+        case .keyCombo, nil:             return false
         }
     }
 
@@ -107,6 +118,7 @@ final class HotKeyMonitor {
         tapDownPending = false
         lastTapUpTime = nil
         guard !isPaused else { return .paused }
+        guard let shortcut else { return .off }
 
         switch shortcut {
         case .keyCombo(let keyCode, let modifiers):
@@ -169,9 +181,17 @@ final class HotKeyMonitor {
             eventClass: OSType(kEventClassKeyboard),
             eventKind: UInt32(kEventHotKeyPressed)
         )
-        let callback: EventHandlerUPP = { _, _, userData in
-            guard let userData else { return noErr }
+        let callback: EventHandlerUPP = { _, event, userData in
+            guard let userData, let event else { return OSStatus(eventNotHandledErr) }
             let monitor = Unmanaged<HotKeyMonitor>.fromOpaque(userData).takeUnretainedValue()
+            // Every hot key the app registered comes through every handler;
+            // another monitor's is passed on to its own.
+            var pressed = EventHotKeyID()
+            let read = GetEventParameter(
+                event, EventParamName(kEventParamDirectObject), EventParamType(typeEventHotKeyID),
+                nil, MemoryLayout<EventHotKeyID>.size, nil, &pressed
+            )
+            guard read == noErr, pressed.id == monitor.hotKeyNumber else { return OSStatus(eventNotHandledErr) }
             MainActor.assumeIsolated { monitor.fire() }
             return noErr
         }
@@ -188,7 +208,7 @@ final class HotKeyMonitor {
         }
 
         // Four-char code 'QSch', just an identifier for our own hot key.
-        let id = EventHotKeyID(signature: OSType(0x5153_6368), id: 1)
+        let id = EventHotKeyID(signature: OSType(0x5153_6368), id: hotKeyNumber)
         let registered = RegisterEventHotKey(
             UInt32(keyCode),
             carbonModifiers,
@@ -282,7 +302,7 @@ final class HotKeyMonitor {
             handleChord(keys: keys, event: event)
         case .doubleTap(let key):
             handleDoubleTap(key: key, event: event)
-        case .keyCombo:
+        case .keyCombo, nil:
             return
         }
     }

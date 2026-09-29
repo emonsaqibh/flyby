@@ -133,6 +133,18 @@ final class AppSettings: ObservableObject {
     @Published var shortcut: Shortcut {
         didSet { defaults.set(shortcut.storage, forKey: "shortcut") }
     }
+    /// Screenshots the window you're in and opens Flyby with it attached.
+    /// `nil` when turned off — stored as such, so it stays off rather than
+    /// falling back to the default.
+    @Published var screenshotShortcut: Shortcut? {
+        didSet { defaults.set(screenshotShortcut?.storage ?? ["kind": "off"], forKey: "screenshotShortcut") }
+    }
+    /// A screenshot has worked at least once. When one then can't be taken,
+    /// macOS has forgotten the permission — an ad-hoc signed Flyby is a new
+    /// app to it after every update — rather than never having been asked.
+    @Published var hasCapturedScreen: Bool {
+        didSet { defaults.set(hasCapturedScreen, forKey: "hasCapturedScreen") }
+    }
     @Published var provider: ProviderKind {
         didSet { defaults.set(provider.rawValue, forKey: "provider") }
     }
@@ -202,6 +214,8 @@ final class AppSettings: ObservableObject {
             hasCompletedOnboarding = defaults.dictionary(forKey: "shortcut") != nil
         }
         shortcut = AppSettings.loadShortcut(from: defaults)
+        screenshotShortcut = AppSettings.loadScreenshotShortcut(from: defaults)
+        hasCapturedScreen = defaults.bool(forKey: "hasCapturedScreen")
         provider = ProviderKind(rawValue: defaults.string(forKey: "provider") ?? "") ?? .browser
         engine = SearchEngine(rawValue: defaults.string(forKey: "engine") ?? "") ?? .google
         geminiModel = AppSettings.loadGeminiModel(from: defaults)
@@ -233,6 +247,8 @@ final class AppSettings: ObservableObject {
         // Assigning through the published properties updates the live UI and
         // rewrites the defaults behind them, so nothing needs a relaunch.
         shortcut = .default
+        screenshotShortcut = .screenshotDefault
+        hasCapturedScreen = false
         provider = .browser
         engine = .google
         geminiModel = Self.defaultGeminiModel
@@ -277,6 +293,12 @@ final class AppSettings: ObservableObject {
             return .modifierChord([a, b])
         }
         return .default
+    }
+
+    private static func loadScreenshotShortcut(from defaults: UserDefaults) -> Shortcut? {
+        guard let stored = defaults.dictionary(forKey: "screenshotShortcut") else { return .screenshotDefault }
+        if stored["kind"] as? String == "off" { return nil }
+        return Shortcut(storage: stored) ?? .screenshotDefault
     }
 
     private static func loadGeminiModel(from defaults: UserDefaults) -> String {

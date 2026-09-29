@@ -16,6 +16,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let controller = SearchController()
     private let stage = PanelStage()
     private let hotKeys = HotKeyMonitor()
+    /// ⌥⇧Space by default: a screenshot of the window you're in, into Flyby.
+    private let screenshotHotKeys = HotKeyMonitor(number: 2) { AppSettings.shared.screenshotShortcut }
+    private var screenshotPermissionPoll: Task<Void, Never>?
+    private var isCapturing = false
+    private var waveGeneration = 0
     // Lazy, so a launch that hands straight over to the installed copy never
     // builds a window it won't use.
     private lazy var panel = FlybyPanel(controller: controller, stage: stage)
@@ -83,8 +88,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if !AppSettings.shared.hasCompletedOnboarding {
             showOnboarding()
         }
+        observeCaptureRequests()
+        // Nothing of an earlier run's screenshots is kept, and the wave's
+        // shader compiles now rather than on the first capture.
+        Screenshot.removeFiles()
+        CaptureWave.prewarm()
         openDebugWindowIfAsked()
         AIModeDebug.runIfAsked(controller) { [weak self] in self?.showFlyby() }
+        AIModeDebug.runConsoleIfAsked(controller)
         // Never prompts, so it's fine alongside onboarding. A session the
         // browser has since rotated is what sends AI Mode's first search
         // into a CAPTCHA.
@@ -367,6 +378,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationWillTerminate(_ notification: Notification) {
         hotKeys.stop()
+        screenshotHotKeys.stop()
         AppSettings.shared.flushPendingWrites()
     }
 
@@ -407,11 +419,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             .sink { [weak self] _ in
                 self?.stopPermissionPoll()
                 self?.hotKeys.stop()
+                self?.screenshotHotKeys.stop()
             }
             .store(in: &cancellables)
         NotificationCenter.default.publisher(for: Installer.relaunchDidFail)
             .receive(on: RunLoop.main)
-            .sink { [weak self] _ in self?.installShortcut(promptIfNeeded: false, reportProblems: false) }
+            .sink { [weak self] _ in
+                self?.installShortcut(promptIfNeeded: false, reportProblems: false)
+                self?.installScreenshotShortcut(reportProblems: false)
+            }
             .store(in: &cancellables)
     }
 
@@ -449,6 +465,42 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 )
             }
             .store(in: &cancellables)
+
+        screenshotHotKeys.onTrigger = { [weak self] in self?.captureScreen() }
+        installScreenshotShortcut(reportProblems: false)
+        AppSettings.shared.$screenshotShortcut
+            .dropFirst()
+            .removeDuplicates()
+            .receive(on: RunLoop.main)
+            .sink { [weak self] _ in self?.installScreenshotShortcut(reportProblems: true) }
+            .store(in: &cancellables)
+    }
+
+    /// The screenshot shortcut is quieter about trouble than the main one:
+    /// nothing in the menu bar, no Accessibility alert (the main shortcut
+    /// owns that conversation) — just a poll that brings it up once the grant
+    /// arrives, and word when a combo the user just recorded is taken.
+    private func installScreenshotShortcut(reportProblems: Bool) {
+        screenshotPermissionPoll?.cancel()
+        screenshotPermissionPoll = nil
+        switch screenshotHotKeys.reload() {
+        case .active, .paused, .off:
+            break
+        case .needsAccessibility:
+            screenshotPermissionPoll = Task { @MainActor [weak self] in
+                while !Task.isCancelled {
+                    try? await Task.sleep(nanoseconds: 1_000_000_000)
+                    guard !Task.isCancelled, let self else { return }
+                    if self.screenshotHotKeys.isPaused { continue }
+                    if self.screenshotHotKeys.reload() != .needsAccessibility { return }
+                }
+            }
+        case .unavailable(let reason):
+            if reportProblems, reason != lastReportedProblem {
+                lastReportedProblem = reason
+                Task { @MainActor [weak self] in self?.presentUnavailableAlert(reason) }
+            }
+        }
     }
 
     /// The recorder has the keyboard: pause the live shortcut (which also
@@ -460,10 +512,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             // A fresh attempt: re-recording the same taken combo should say so again.
             lastReportedProblem = nil
             hotKeys.isPaused = true
+            // Either recorder: a registered combo swallows its keystroke
+            // before a recorder can see it, and neither shortcut should fire
+            // while the other is being recorded.
+            screenshotHotKeys.isPaused = true
         } else {
             guard hotKeys.isPaused else { return }
             hotKeys.isPaused = false
+            screenshotHotKeys.isPaused = false
             installShortcut(promptIfNeeded: false, reportProblems: true)
+            installScreenshotShortcut(reportProblems: true)
         }
     }
 
@@ -471,7 +529,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         stopPermissionPoll()
 
         switch hotKeys.reload() {
-        case .active, .paused:
+        case .active, .paused, .off:
             lastReportedProblem = nil
             updateStatusItem(.ok)
 
@@ -512,7 +570,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 switch self.hotKeys.reload() {
                 case .needsAccessibility, .paused:
                     continue
-                case .active:
+                case .active, .off:
                     self.permissionPoll = nil
                     self.updateStatusItem(.ok)
                     return
@@ -580,6 +638,85 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if onboardingWindow == nil, choice == .alertFirstButtonReturn {
             openSettings()
         }
+    }
+
+    // MARK: - Screenshots
+
+    /// The Screenshot pill and /screenshot ask through the controller.
+    private func observeCaptureRequests() {
+        NotificationCenter.default.publisher(for: .flybyShouldCaptureScreen)
+            .receive(on: RunLoop.main)
+            .sink { [weak self] _ in self?.captureScreen() }
+            .store(in: &cancellables)
+    }
+
+    /// A screenshot of the window the user was in, waiting over the input
+    /// for their question. From anywhere with the shortcut — Flyby opens with
+    /// it — or from the bar, which takes a new one. The wave plays across
+    /// the display as it's taken.
+    private func captureScreen() {
+        guard isRunning, !isCapturing else { return }
+        // The app the user was in: whatever's in front, or, with Flyby open
+        // (and so in front), the one Flyby came from.
+        let frontmost = NSWorkspace.shared.frontmostApplication
+        let target = frontmost?.processIdentifier == ProcessInfo.processInfo.processIdentifier ? previousApp : frontmost
+
+        guard ScreenCapture.hasPermission else {
+            reportCaptureProblem(.notAllowed)
+            return
+        }
+        isCapturing = true
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            defer { self.isCapturing = false }
+            do {
+                let capture = try await ScreenCapture.capture(windowOf: target)
+                AppSettings.shared.hasCapturedScreen = true
+                self.playWave(for: capture)
+                self.openFlybyIfClosed()
+                self.controller.attach(capture.screenshot)
+            } catch let failure as ScreenCapture.Failure {
+                self.reportCaptureProblem(failure)
+            } catch {
+                self.reportCaptureProblem(.failed(error.localizedDescription))
+            }
+        }
+    }
+
+    /// Said over the input, in Flyby — opened for it if need be. The first
+    /// time, macOS's own prompt comes too; after that only System Settings
+    /// can change the answer.
+    private func reportCaptureProblem(_ failure: ScreenCapture.Failure) {
+        openFlybyIfClosed()
+        switch failure {
+        case .notAllowed:
+            if AppSettings.shared.hasCapturedScreen {
+                controller.captureNotice = .permissionLost
+            } else {
+                ScreenCapture.requestPermission()
+                controller.captureNotice = .needsPermission
+            }
+        case .failed(let message):
+            controller.captureNotice = .failed(message)
+        }
+    }
+
+    private func openFlybyIfClosed() {
+        if !stage.isPresented || stage.isClosing { showFlyby() }
+    }
+
+    /// Over everything on the window's display, the menu bar and Dock
+    /// included — except Flyby's bar, lifted above it until it's done, so
+    /// the bar can open while the wave crosses the screen behind it.
+    private func playWave(for capture: ScreenCapture.Capture) {
+        waveGeneration += 1
+        let generation = waveGeneration
+        let resting = NSWindow.Level.floating
+        CaptureWave.play(over: capture.screen, showing: capture.display, focus: capture.windowFrame, level: .screenSaver) { [weak self] in
+            guard let self, generation == self.waveGeneration else { return }
+            self.panel.level = resting
+        }
+        panel.level = NSWindow.Level(rawValue: NSWindow.Level.screenSaver.rawValue + 1)
     }
 
     // MARK: - Showing and hiding

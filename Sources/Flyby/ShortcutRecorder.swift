@@ -15,6 +15,8 @@ import Combine
 /// tabs, or Continue in onboarding would otherwise leave the shortcut dead.
 struct ShortcutRecorder: View {
     @Binding var shortcut: Shortcut
+    /// What Reset goes back to.
+    let defaultShortcut: Shortcut
     var onRecordingChanged: (Bool) -> Void
 
     @State private var isRecording = false
@@ -38,8 +40,13 @@ struct ShortcutRecorder: View {
     /// is thinking about the gesture, not performing it.
     private static let doubleTapWindow: TimeInterval = 0.45
 
-    init(shortcut: Binding<Shortcut>, onRecordingChanged: @escaping (Bool) -> Void = { _ in }) {
+    init(
+        shortcut: Binding<Shortcut>,
+        defaultShortcut: Shortcut = .default,
+        onRecordingChanged: @escaping (Bool) -> Void = { _ in }
+    ) {
         _shortcut = shortcut
+        self.defaultShortcut = defaultShortcut
         self.onRecordingChanged = onRecordingChanged
     }
 
@@ -122,9 +129,9 @@ struct ShortcutRecorder: View {
     private var trailingButton: some View {
         if isRecording {
             fieldButton("xmark.circle.fill", help: "Cancel") { setRecording(false) }
-        } else if shortcut != .default {
-            fieldButton("arrow.counterclockwise.circle.fill", help: "Reset to \(Shortcut.default.voiceOverDescription)") {
-                shortcut = .default
+        } else if shortcut != defaultShortcut {
+            fieldButton("arrow.counterclockwise.circle.fill", help: "Reset to \(defaultShortcut.voiceOverDescription)") {
+                shortcut = defaultShortcut
             }
         } else {
             Color.clear

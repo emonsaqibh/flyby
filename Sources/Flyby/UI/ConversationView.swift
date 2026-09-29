@@ -143,17 +143,28 @@ struct ConversationView: View {
 
     private var liveTurn: some View {
         VStack(alignment: .leading, spacing: 16) {
-            QuestionRow {
-                if !controller.submittedQuery.isEmpty {
-                    QuestionBubble(text: controller.submittedQuery)
-                        .matchedGeometryEffect(id: controller.liveTurnID, in: questions, properties: .position)
-                        // A new question is a new bubble. The one it replaces
-                        // is now an earlier turn's, standing in the same place.
-                        .id(controller.liveTurnID)
-                        .transition(.asymmetric(
-                            insertion: reduceMotion ? .opacity : .questionArrival(from: arrivalScale),
-                            removal: .identity
-                        ))
+            VStack(alignment: .leading, spacing: 6) {
+                // The screenshot the question is about, over its bubble, as a
+                // chat shows a photo sent with a message.
+                if let attachment = controller.liveAttachment, !controller.submittedQuery.isEmpty {
+                    QuestionRow {
+                        AttachmentThumbnail(attachment: attachment, maxSize: AnswerMetrics.attachmentSize)
+                            .id(attachment.id)
+                            .transition(.opacity.combined(with: .scale(scale: 0.92, anchor: .bottomTrailing)))
+                    }
+                }
+                QuestionRow {
+                    if !controller.submittedQuery.isEmpty {
+                        QuestionBubble(text: controller.submittedQuery)
+                            .matchedGeometryEffect(id: controller.liveTurnID, in: questions, properties: .position)
+                            // A new question is a new bubble. The one it replaces
+                            // is now an earlier turn's, standing in the same place.
+                            .id(controller.liveTurnID)
+                            .transition(.asymmetric(
+                                insertion: reduceMotion ? .opacity : .questionArrival(from: arrivalScale),
+                                removal: .identity
+                            ))
+                    }
                 }
             }
 
@@ -234,9 +245,16 @@ private struct EarlierTurnView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            QuestionRow {
-                QuestionBubble(text: turn.query)
-                    .matchedGeometryEffect(id: turn.id, in: questions, properties: .position)
+            VStack(alignment: .leading, spacing: 6) {
+                if let attachment = turn.attachment {
+                    QuestionRow {
+                        AttachmentThumbnail(attachment: attachment, maxSize: AnswerMetrics.attachmentSize)
+                    }
+                }
+                QuestionRow {
+                    QuestionBubble(text: turn.query)
+                        .matchedGeometryEffect(id: turn.id, in: questions, properties: .position)
+                }
             }
 
             if !turn.answer.isEmpty {
@@ -372,6 +390,8 @@ enum AnswerMetrics {
     static let sideInset: CGFloat = 24
     /// Room a question bubble always leaves on its left.
     static let bubbleLeadingRoom: CGFloat = 120
+    /// The most a screenshot over its question takes up.
+    static let attachmentSize = CGSize(width: 220, height: 140)
 }
 
 // MARK: - Waiting

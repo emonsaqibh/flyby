@@ -24,6 +24,17 @@ public enum AIModeQuery {
         return URL(string: "https://www.google.com/search?" + parameters) ?? google
     }
 
+    /// AI Mode with nothing asked yet: `udm=50` and no `q`, in the user's
+    /// language. A question with a screenshot starts here, because a URL
+    /// can't carry a picture: it's asked through the page's own composer.
+    public static func startURL(languageCode: String?) -> URL {
+        var parameters = "udm=50"
+        if let hl = languageCode, !hl.isEmpty {
+            parameters += "&hl=" + formEncode(hl)
+        }
+        return URL(string: "https://www.google.com/search?" + parameters) ?? google
+    }
+
     /// google.com itself, in the user's language — what the engine loads to
     /// warm up before the first search.
     public static func homeURL(languageCode: String?) -> URL {

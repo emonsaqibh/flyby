@@ -1,4 +1,5 @@
 import AppKit
+import WebKit
 import os
 import FlybyCore
 
@@ -32,6 +33,18 @@ private let debugLog = Logger(subsystem: "com.fringecore.flyby", category: "debu
 /// - `-FlybyDebugProbe <path>`: after each answer, writes what the page's
 ///   composer and turns look like to `<path>.<n>.json` — the first thing to
 ///   look at when Google changes its markup.
+/// - `-FlybyDebugConsole <path>`: a live console into the AI Mode page, for
+///   working out Google's markup without rebuilding. The page gets a window
+///   of its own, and whenever `<path>` changes it runs as the body of an
+///   async function — in Flyby's content world, or the page's own when its
+///   first line is `// page`. What it returns goes to `<path>.out`, and a
+///   picture of the page to `<path>.png`. `image` (base64) and `imageName`
+///   are in scope when `-FlybyDebugImage` is given.
+/// - `-FlybyDebugImage <path>`: a picture sent with the first question, as
+///   if it had been captured — and, with the console, the file the page gets
+///   when it opens a file picker.
+/// - `-FlybyDebugCapture YES`: a second after launch, a real screenshot of
+///   the frontmost window, wave and all, as the shortcut takes one.
 ///
 /// Each answer's first 300 characters are logged publicly under the `debug`
 /// category, and the engine logs (under `aimode`) which way each follow-up
@@ -46,12 +59,27 @@ enum AIModeDebug {
 
     /// `showPanel` opens Flyby as the hot key does.
     static func runIfAsked(_ controller: SearchController, showPanel: @escaping () -> Void) {
+        if flag("FlybyDebugCapture") {
+            Task { @MainActor in
+                try? await Task.sleep(nanoseconds: 1_000_000_000)
+                debugLog.info("Capturing the frontmost window")
+                controller.captureScreen()
+            }
+        }
         guard let first = string("FlybyDebugAsk") else { return }
         let followUp = string("FlybyDebugFollowUp")
         Task { @MainActor in
             if flag("FlybyDebugShowPanel") {
                 showPanel()
                 try? await Task.sleep(nanoseconds: 600_000_000)
+            }
+            if let path = string("FlybyDebugImage") {
+                if let screenshot = Screenshot(contentsOf: URL(fileURLWithPath: path)) {
+                    controller.attach(screenshot)
+                    debugLog.info("Q1 goes with \(path, privacy: .public) (\(screenshot.upload.count, privacy: .public) bytes)")
+                } else {
+                    debugLog.error("Couldn't read \(path, privacy: .public) as an image")
+                }
             }
             debugLog.info("Q1: \(first, privacy: .public)")
             await ask("Q1", of: controller, step: 1) { controller.send(first, with: .aiMode) }
@@ -138,6 +166,67 @@ enum AIModeDebug {
             debugLog.info("Page described in \(path, privacy: .public)")
         } catch {
             debugLog.error("Couldn't write \(path, privacy: .public): \(error.localizedDescription, privacy: .public)")
+        }
+    }
+
+    // MARK: - Console
+
+    private static var consoleWindow: NSWindow?
+
+    static func runConsoleIfAsked(_ controller: SearchController) {
+        guard let path = string("FlybyDebugConsole") else { return }
+        let engine = controller.aiMode
+        var arguments: [String: Any] = ["image": NSNull(), "imageName": NSNull()]
+        if let imagePath = string("FlybyDebugImage") {
+            let url = URL(fileURLWithPath: imagePath)
+            engine.fileForPicker = url
+            if let data = FileManager.default.contents(atPath: imagePath) {
+                arguments = ["image": data.base64EncodedString(), "imageName": url.lastPathComponent]
+            }
+        }
+
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 820, height: 900),
+            styleMask: [.titled, .resizable, .miniaturizable],
+            backing: .buffered, defer: false
+        )
+        window.title = "AI Mode console — \(path)"
+        window.isReleasedWhenClosed = false
+        window.contentView = engine.webView
+        window.center()
+        window.orderFrontRegardless()
+        consoleWindow = window
+        engine.prewarm()
+        debugLog.info("Console watching \(path, privacy: .public)")
+
+        Task { @MainActor in
+            var lastRun: Date?
+            while true {
+                try? await Task.sleep(nanoseconds: 500_000_000)
+                guard let modified = (try? FileManager.default.attributesOfItem(atPath: path))?[.modificationDate] as? Date,
+                      modified != lastRun,
+                      let source = try? String(contentsOfFile: path, encoding: .utf8) else { continue }
+                lastRun = modified
+                let world: WKContentWorld = source.hasPrefix("// page") ? .page : AIModeEngine.contentWorld
+                let body = """
+                try {
+                  var result = await (async function () {
+                \(source)
+                  })();
+                  return typeof result === 'string' ? result : JSON.stringify(result, null, 1);
+                } catch (e) {
+                  return 'error: ' + e + '\\n' + (e && e.stack);
+                }
+                """
+                let result = await engine.webView.flybyCallAsync(body, arguments: arguments, in: world) ?? "(no string result)"
+                try? result.write(toFile: path + ".out", atomically: true, encoding: .utf8)
+                if let image = try? await engine.webView.takeSnapshot(configuration: nil),
+                   let tiff = image.tiffRepresentation,
+                   let png = NSBitmapImageRep(data: tiff)?.representation(using: .png, properties: [:]) {
+                    try? png.write(to: URL(fileURLWithPath: path + ".png"))
+                }
+                debugLog.info("Console ran \(path, privacy: .public)")
+            }
         }
     }
 

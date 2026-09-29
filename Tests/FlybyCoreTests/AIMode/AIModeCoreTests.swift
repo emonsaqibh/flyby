@@ -25,6 +25,11 @@ import Testing
         #expect(AIModeQuery.url(for: "x", languageCode: "").absoluteString == "https://www.google.com/search?q=x&udm=50")
     }
 
+    @Test func startURL() {
+        #expect(AIModeQuery.startURL(languageCode: "de").absoluteString == "https://www.google.com/search?udm=50&hl=de")
+        #expect(AIModeQuery.startURL(languageCode: nil).absoluteString == "https://www.google.com/search?udm=50")
+    }
+
     @Test func homeURL() {
         #expect(AIModeQuery.homeURL(languageCode: "de").absoluteString == "https://www.google.com/?hl=de")
         #expect(AIModeQuery.homeURL(languageCode: nil).absoluteString == "https://www.google.com/")

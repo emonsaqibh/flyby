@@ -278,6 +278,7 @@ struct ProviderChip: View {
 /// The one whose panel is open reads as selected.
 struct StagePills: View {
     @ObservedObject var controller: SearchController
+    @ObservedObject private var settings = AppSettings.shared
 
     var body: some View {
         // Spacing under the gap between them: two pills, never one blob.
@@ -299,17 +300,31 @@ struct StagePills: View {
                 ) {
                     controller.showsShortcuts.toggle()
                 }
+                // Only for providers that can see a picture.
+                if settings.provider.takesScreenshots {
+                    StagePill(
+                        symbol: "camera.viewfinder",
+                        title: "Screenshot",
+                        shortcut: settings.screenshotShortcut?.displayString,
+                        isActive: controller.pendingScreenshot != nil
+                    ) {
+                        controller.captureScreen()
+                    }
+                    .transition(.opacity.combined(with: .scale(scale: 0.9)))
+                }
             }
         }
         .animation(.easeOut(duration: 0.18), value: controller.showsHistory)
         .animation(.easeOut(duration: 0.18), value: controller.showsShortcuts)
+        .animation(.easeOut(duration: 0.18), value: controller.pendingScreenshot?.id)
+        .animation(.spring(response: 0.3, dampingFraction: 0.86), value: settings.provider.takesScreenshots)
     }
 }
 
 private struct StagePill: View {
     let symbol: String
     let title: String
-    let shortcut: String
+    let shortcut: String?
     let isActive: Bool
     let action: () -> Void
 
@@ -320,9 +335,11 @@ private struct StagePill: View {
                     .font(.system(size: 11, weight: .semibold))
                 Text(title)
                     .font(.system(size: 12, weight: .medium))
-                Text(shortcut)
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundStyle(.tertiary)
+                if let shortcut {
+                    Text(shortcut)
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(.tertiary)
+                }
             }
             .foregroundStyle(isActive ? AnyShapeStyle(Color.accentColor) : AnyShapeStyle(.secondary))
             .padding(.horizontal, 11)
@@ -337,9 +354,9 @@ private struct StagePill: View {
                 .opacity(isActive ? 1 : 0)
                 .allowsHitTesting(false)
         }
-        .help("\(title) (\(shortcut))")
+        .help(shortcut.map { "\(title) (\($0))" } ?? title)
         .accessibilityLabel(title)
-        .accessibilityHint("Shortcut: \(shortcut)")
+        .accessibilityHint(shortcut.map { "Shortcut: \($0)" } ?? "")
         .accessibilityAddTraits(isActive ? .isSelected : [])
     }
 }

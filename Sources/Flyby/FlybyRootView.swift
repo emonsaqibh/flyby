@@ -145,6 +145,14 @@ private struct OverlayStage: View {
                         .frame(width: CardMetrics.width, height: stage.cardSize.height, alignment: .bottomLeading)
                 }
 
+                if showsTray {
+                    AttachmentTray(controller: controller)
+                        .padding(.leading, CardMetrics.edgeInset)
+                        .padding(.bottom, inputGeometry.bottom + inputGeometry.size.height + 8)
+                        .frame(width: CardMetrics.width, alignment: .leading)
+                        .transition(.opacity.combined(with: .scale(scale: 0.94, anchor: .bottomLeading)))
+                }
+
                 if !controller.commands.isEmpty {
                     CommandList(controller: controller)
                         .padding(.leading, CardMetrics.edgeInset)
@@ -165,6 +173,8 @@ private struct OverlayStage: View {
         .morphSpring(isOpen: isOpen)
         .animation(.spring(response: 0.3, dampingFraction: 0.86), value: controller.showsShortcuts)
         .animation(.spring(response: 0.26, dampingFraction: 0.9), value: controller.commands.isEmpty)
+        .animation(.spring(response: 0.3, dampingFraction: 0.84), value: controller.pendingScreenshot?.id)
+        .animation(.spring(response: 0.3, dampingFraction: 0.84), value: controller.captureNotice)
         // Put away folded, so the next opening starts from one line.
         .onChange(of: stage.isExpanded) { _, expanded in
             if !expanded { inputLines = 1 }
@@ -173,6 +183,13 @@ private struct OverlayStage: View {
 
     /// The card is out: there's a conversation, or the history list.
     private var isOpen: Bool { stage.isExpanded && controller.showsPanel }
+
+    /// The screenshot over the input — not while the command list or the
+    /// shortcuts have that spot, and not before the bar is there to hold it.
+    private var showsTray: Bool {
+        stage.isPresented && controller.commands.isEmpty && !controller.showsShortcuts
+            && (controller.pendingScreenshot != nil || controller.captureNotice != nil)
+    }
 
     private var inputStyle: InputStyle { isOpen ? .field : .bar }
 

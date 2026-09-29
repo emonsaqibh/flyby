@@ -14,6 +14,9 @@ enum Shortcut: Equatable {
     case doubleTap(TriggerKey)
 
     static let `default` = Shortcut.doubleTap(.rightOption)
+    /// Screenshots the window you're in and opens Flyby with it: ⌥⇧Space, a
+    /// plain key combo, so it needs no Accessibility permission.
+    static let screenshotDefault = Shortcut.keyCombo(keyCode: UInt16(kVK_Space), modifiers: [.option, .shift])
 
     var displayString: String {
         switch self {

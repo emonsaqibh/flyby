@@ -47,6 +47,11 @@ final class AIModeEngine: ObservableObject {
     /// The page. Created on first use and reused for every search after.
     let webView: WKWebView
 
+    /// What the page gets when it asks for a file — the screenshot being
+    /// attached. Otherwise the picker is cancelled: Flyby never shows the
+    /// page's own file dialog.
+    var fileForPicker: URL?
+
     /// Flyby's scripts run in their own world: Google's scripts can't see
     /// them, nor the `webkit.messageHandlers` entry that would otherwise give
     /// away an embedded web view.
@@ -79,6 +84,9 @@ final class AIModeEngine: ObservableObject {
     private var stallTimer: Task<Void, Never>?
     private var unreadableTimer: Task<Void, Never>?
     private var followUpTimer: Task<Void, Never>?
+    /// A question with a screenshot, waiting for AI Mode's start page to
+    /// finish loading so it can be asked through the composer.
+    private var pendingAsk: (question: String, screenshot: Screenshot, searchID: Int)?
     /// The page finished answering the latest question, and nothing since
     /// has taken it from that conversation — so a follow-up can be typed
     /// into it. Only an answer the page itself called finished counts: not
@@ -93,6 +101,10 @@ final class AIModeEngine: ObservableObject {
     /// message with it.
     private var pageTurn = 0
     private var pageGeneration = 0
+    /// Documents committed so far — so a question whose page navigated away
+    /// mid-ask (taking the script's answer with it) can be told from one the
+    /// page refused.
+    private var documentsCommitted = 0
     private var lastAccountReport: AccountReport?
     private var readerRequested: Bool?
 
@@ -156,7 +168,10 @@ final class AIModeEngine: ObservableObject {
             .store(in: &settingsObservers)
     }
 
-    func search(_ query: String) {
+    /// With a screenshot the page starts empty, at AI Mode's start page, and
+    /// the question is asked through the composer once it's there, with the
+    /// picture attached — a URL can't carry one.
+    func search(_ query: String, attaching screenshot: Screenshot? = nil) {
         let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
 
@@ -174,12 +189,20 @@ final class AIModeEngine: ObservableObject {
         snapshot = .empty
         transition(to: .loading)
         armStallTimer()
-        aiModeLog.info("Search started (\(trimmed.count, privacy: .public) characters)")
+        aiModeLog.info("Search started (\(trimmed.count, privacy: .public) characters\(screenshot == nil ? "" : ", with a screenshot", privacy: .public))")
 
         // A stale Safari/Firefox copy is re-read first, so the page loads with
         // the browser's current session. It returns at once when fresh.
         let id = searchID
-        let url = AIModeQuery.url(for: trimmed, languageCode: AIModeQuery.preferredLanguageCode)
+        let language = AIModeQuery.preferredLanguageCode
+        let url: URL
+        if let screenshot {
+            pendingAsk = (trimmed, screenshot, id)
+            url = AIModeQuery.startURL(languageCode: language)
+        } else {
+            pendingAsk = nil
+            url = AIModeQuery.url(for: trimmed, languageCode: language)
+        }
         Task { [weak self] in
             guard let self else { return }
             await self.session.refreshIfStale()
@@ -198,12 +221,12 @@ final class AIModeEngine: ObservableObject {
     /// The caller has to know the page's conversation is this chat's: every
     /// way of leaving a chat (`reset()`, and `stop()` when another provider
     /// takes a turn) ends it here too.
-    func followUp(_ question: String, orSearch fallback: String) {
+    func followUp(_ question: String, attaching screenshot: Screenshot? = nil, orSearch fallback: String) {
         let trimmed = question.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
         guard canContinueOnPage else {
             aiModeLog.info("Follow-up: no conversation on the page to continue; searching with it in the query")
-            search(fallback)
+            search(fallback, attaching: screenshot)
             return
         }
 
@@ -215,29 +238,78 @@ final class AIModeEngine: ObservableObject {
         isFrozen = false
         isContinuable = false
         userRevealedPage = false
-        pageTurn += 1
+        pendingAsk = nil
         snapshot = .empty
         transition(to: .loading)
         armStallTimer()
+        askOnPage(trimmed, attaching: screenshot, onFreshPage: false, fallback: fallback)
+    }
 
+    /// Types `question` into the composer — after attaching the screenshot,
+    /// if there is one — and sends it. When the page won't take it, a
+    /// follow-up is asked as a search for `fallback`; a question asked on a
+    /// fresh start page (no `fallback`) has nowhere else to go, and fails.
+    private func askOnPage(_ question: String, attaching screenshot: Screenshot?, onFreshPage fresh: Bool, fallback: String?) {
+        pageTurn += 1
         let id = searchID
         let turn = pageTurn
+        let document = documentsCommitted
+        var arguments: [String: Any] = [
+            "question": question, "turn": turn, "fresh": fresh,
+            "image": NSNull(), "imageName": NSNull(), "imageType": NSNull(),
+        ]
+        if let screenshot {
+            do {
+                let file = try screenshot.file()
+                fileForPicker = file
+                arguments["image"] = screenshot.upload.base64EncodedString()
+                arguments["imageName"] = file.lastPathComponent
+                arguments["imageType"] = screenshot.mimeType
+            } catch {
+                aiModeLog.error("Couldn't write the screenshot for the page: \(error.localizedDescription, privacy: .public)")
+                fail(Self.screenshotFailure)
+                return
+            }
+        }
         Task { [weak self] in
             guard let self else { return }
             let result = await self.webView.flybyCallAsync(
-                "var f = window.__flyby; return f && f.followUp ? await f.followUp(question, turn) : 'no-extractor';",
-                arguments: ["question": trimmed, "turn": turn],
+                """
+                var f = window.__flyby;
+                if (!f || !f.followUp) return 'no-extractor';
+                return await f.followUp(question, turn, { fresh: fresh, image: image, imageName: imageName, imageType: imageType });
+                """,
+                arguments: arguments,
                 in: Self.contentWorld
             )
+            self.fileForPicker = nil
             guard id == self.searchID, self.isSearchActive, !self.isFrozen else { return }
-            if result == "sent" {
-                aiModeLog.info("Follow-up asked in Google's conversation (turn \(turn, privacy: .public))")
-                self.armFollowUpTimer(fallback: fallback)
+            let what = screenshot == nil ? "Question" : "Question with a screenshot"
+            if result == nil, self.documentsCommitted != document {
+                // Sending loaded a new document, which took the script with
+                // it; that document answers from its own first turn.
+                aiModeLog.info("\(what, privacy: .public) sent; the page moved to a new document to answer it")
+                self.armFollowUpTimer(fallback: fallback, attaching: screenshot)
+            } else if result == "sent" {
+                aiModeLog.info("\(what, privacy: .public) asked in Google's composer (turn \(turn, privacy: .public))")
+                self.armFollowUpTimer(fallback: fallback, attaching: screenshot)
+            } else if let fallback {
+                aiModeLog.error("\(what, privacy: .public) couldn't be asked in the page (\(result ?? "no result", privacy: .public)); searching with the conversation in the query")
+                self.search(fallback, attaching: screenshot)
             } else {
-                aiModeLog.error("Follow-up couldn't be asked in the page (\(result ?? "no result", privacy: .public)); searching with the conversation in the query")
-                self.search(fallback)
+                aiModeLog.error("\(what, privacy: .public) couldn't be asked on the start page (\(result ?? "no result", privacy: .public))")
+                self.fail(screenshot == nil ? "Google's page wouldn't take the question. Try again." : Self.screenshotFailure)
             }
         }
+    }
+
+    private static let screenshotFailure =
+        "Google's page wouldn't take the screenshot. Try again, or ask Gemini about it."
+
+    private func fail(_ message: String) {
+        isContinuable = false
+        cancelTimers()
+        transition(to: .failed(message))
     }
 
     /// The page holds a finished conversation it can be asked more in.
@@ -254,6 +326,7 @@ final class AIModeEngine: ObservableObject {
         guard isSearchActive, !isFrozen else { return }
         isFrozen = true
         isContinuable = false
+        pendingAsk = nil
         if webView.isLoading { webView.stopLoading() }
         freezePage()
         cancelTimers()
@@ -280,6 +353,8 @@ final class AIModeEngine: ObservableObject {
         isSearchActive = false
         isFrozen = false
         isContinuable = false
+        pendingAsk = nil
+        fileForPicker = nil
         userRevealedPage = false
         state = .idle
         snapshot = .empty
@@ -418,6 +493,7 @@ final class AIModeEngine: ObservableObject {
     }
 
     fileprivate func didCommit() {
+        documentsCommitted += 1
         acceptsMessages = true
         pageID = nil
         // A new document starts its questions from 0, and whatever
@@ -434,6 +510,14 @@ final class AIModeEngine: ObservableObject {
         syncReader(force: true)
         // Re-send the page's state, in case a message raced the commit.
         webView.flybyRun("(function(){var f=window.__flyby;if(f&&f.poke)f.poke();return true;})()", in: Self.contentWorld)
+        // The start page a screenshot question waits for. Not a CAPTCHA or a
+        // consent wall on the way: those hold the question until the user
+        // gets through and the page comes back.
+        if let pending = pendingAsk, pending.searchID == searchID, isSearchActive, !isFrozen, state == .loading {
+            pendingAsk = nil
+            askOnPage(pending.question, attaching: pending.screenshot, onFreshPage: true, fallback: nil)
+            return
+        }
         guard isSearchActive, !isFrozen, state == .loading, snapshot.isEmpty,
               let url = webView.url, AIModePage.isResultsPage(url) else { return }
         armUnreadableTimer()
@@ -507,8 +591,9 @@ final class AIModeEngine: ObservableObject {
     }
 
     /// Sent, but is the page answering? If nothing of the answer shows up,
-    /// the follow-up is asked as a search instead: slower, but an answer.
-    private func armFollowUpTimer(fallback: String) {
+    /// the follow-up is asked as a search instead: slower, but an answer. A
+    /// question asked on a fresh page has no search to fall back on.
+    private func armFollowUpTimer(fallback: String?, attaching screenshot: Screenshot?) {
         followUpTimer?.cancel()
         let id = searchID
         followUpTimer = Task { [weak self] in
@@ -516,8 +601,13 @@ final class AIModeEngine: ObservableObject {
             guard !Task.isCancelled, let self else { return }
             guard id == self.searchID, self.isSearchActive, !self.isFrozen,
                   self.state == .loading, self.snapshot.isEmpty else { return }
-            aiModeLog.error("The page took the follow-up but never answered it; searching with the conversation in the query")
-            self.search(fallback)
+            if let fallback {
+                aiModeLog.error("The page took the follow-up but never answered it; searching with the conversation in the query")
+                self.search(fallback, attaching: screenshot)
+            } else {
+                aiModeLog.error("The page took the question but never answered it")
+                self.fail("Google took the question but never answered. Try again.")
+            }
         }
     }
 
@@ -684,6 +774,19 @@ private final class AIModeWebBridge: NSObject, WKNavigationDelegate, WKUIDelegat
             engine?.openExternally(url)
         }
         return nil
+    }
+
+    /// A file input was clicked: answered with the file being attached, if
+    /// any, without a dialog.
+    func webView(
+        _ webView: WKWebView,
+        runOpenPanelWith parameters: WKOpenPanelParameters,
+        initiatedByFrame frame: WKFrameInfo,
+        completionHandler: @escaping @MainActor ([URL]?) -> Void
+    ) {
+        let file = engine?.fileForPicker
+        aiModeLog.info("The page asked for a file (\(file == nil ? "none to give" : "attaching one", privacy: .public))")
+        completionHandler(file.map { [$0] })
     }
 }
 

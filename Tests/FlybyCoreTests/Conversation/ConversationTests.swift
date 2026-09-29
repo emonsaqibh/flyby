@@ -64,6 +64,39 @@ private func conversation(_ title: String, updated seconds: TimeInterval) -> Con
         #expect(ChatContext.messages(from: turns, maxTotalCharacters: 150).map(\.text).first == "new")
         #expect(ChatContext.messages(from: [turns[1]], maxTotalCharacters: 10).count == 2)
     }
+
+    @Test func sendsAScreenshotAgainWithItsQuestion() {
+        var asked = turn("What's this error?", answer: "A missing semicolon.")
+        let full = ChatImage(data: Data([1, 2, 3]), mimeType: "image/jpeg")
+        let messages = ChatContext.messages(from: [asked], images: [asked.id: full])
+        #expect(messages[0].image == full)
+        #expect(messages[1].image == nil)
+
+        // From history there's only the thumbnail, which stands in for it.
+        asked.attachment = Attachment(title: "Xcode", thumbnail: Data([9]))
+        let restored = ChatContext.messages(from: [asked])
+        #expect(restored[0].image == ChatImage(data: Data([9]), mimeType: "image/jpeg"))
+        #expect(ChatContext.messages(from: [asked], images: [asked.id: full])[0].image == full)
+    }
+}
+
+@Suite struct AttachmentTests {
+    @Test func chatsSavedBeforeScreenshotsStillLoad() throws {
+        let saved = turn("q", answer: "a")
+        var json = try JSONSerialization.jsonObject(with: JSONEncoder().encode(saved)) as! [String: Any]
+        json.removeValue(forKey: "attachment")
+        let old = try JSONSerialization.data(withJSONObject: json)
+        let decoded = try JSONDecoder().decode(ConversationTurn.self, from: old)
+        #expect(decoded.attachment == nil)
+        #expect(decoded.query == "q")
+    }
+
+    @Test func aTurnKeepsItsThumbnail() throws {
+        var asked = turn("q", answer: "a")
+        asked.attachment = Attachment(title: "Safari — Flyby", thumbnail: Data([0xFF, 0xD8, 0xFF]))
+        let decoded = try JSONDecoder().decode(ConversationTurn.self, from: JSONEncoder().encode(asked))
+        #expect(decoded.attachment == asked.attachment)
+    }
 }
 
 @Suite struct HistoryStoreTests {

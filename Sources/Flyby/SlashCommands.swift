@@ -9,7 +9,7 @@ import SwiftUI
 /// list, a provider — never a new feature of its own.
 struct SlashCommand: Identifiable, Equatable {
     enum Action: Equatable {
-        case settings, history, shortcuts, newChat, retry, copy
+        case settings, history, shortcuts, newChat, retry, copy, screenshot
         case provider(ProviderKind)
     }
 
@@ -26,6 +26,7 @@ struct SlashCommand: Identifiable, Equatable {
         SlashCommand(name: "gemini", summary: "Answer with Gemini", symbol: ProviderKind.gemini.icon, action: .provider(.gemini)),
         SlashCommand(name: "apple", summary: "Answer with Apple Intelligence", symbol: ProviderKind.appleIntelligence.icon, action: .provider(.appleIntelligence)),
         SlashCommand(name: "browser", summary: "Search in your browser", symbol: ProviderKind.browser.icon, action: .provider(.browser)),
+        SlashCommand(name: "screenshot", summary: "Ask about the window you're in", symbol: "camera.viewfinder", action: .screenshot),
         SlashCommand(name: "new", summary: "Start a new chat", symbol: "square.and.pencil", action: .newChat),
         SlashCommand(name: "retry", summary: "Search again", symbol: "arrow.clockwise", action: .retry),
         SlashCommand(name: "copy", summary: "Copy the answer", symbol: "doc.on.doc", action: .copy),

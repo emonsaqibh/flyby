@@ -58,6 +58,13 @@ final class SearchController: ObservableObject {
     /// The live turn was reopened from history rather than asked in this
     /// session, so there's no page behind it and nothing running.
     @Published private(set) var isRestored = false
+    /// The screenshot the live turn asked about, as its bubble shows it.
+    @Published private(set) var liveAttachment: Attachment?
+
+    /// A screenshot waiting over the input, to go with the next question.
+    @Published private(set) var pendingScreenshot: Screenshot?
+    /// What the input says about screenshots, when there's something to say.
+    @Published var captureNotice: CaptureNotice?
 
     /// The user asked to see Google's page instead of the native answer.
     /// Tells the engine too, so reader mode can strip Google's chrome from
@@ -79,6 +86,10 @@ final class SearchController: ObservableObject {
     private var conversationID = UUID()
     private var conversationStarted = Date()
     private var liveTurnDate = Date()
+    /// Every screenshot asked about in this chat, by turn, at the size that
+    /// was sent — so a retry or a follow-up sends it again. History keeps
+    /// only thumbnails.
+    private var screenshots: [UUID: Screenshot] = [:]
     /// The streaming answer from Gemini or Apple Intelligence.
     private var answerTask: Task<Void, Never>?
     private var cancellables = Set<AnyCancellable>()
@@ -142,7 +153,7 @@ final class SearchController: ObservableObject {
             return
         }
         let q = query.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !q.isEmpty else {
+        guard !q.isEmpty || pendingScreenshot != nil else {
             if showsHistory, let id = historySelection { openConversation(id) }
             return
         }
@@ -165,7 +176,7 @@ final class SearchController: ObservableObject {
     /// turn, answered afresh, so the question stays where it is.
     func retry() {
         guard !submittedQuery.isEmpty, let provider = activeProvider else { return }
-        run(submittedQuery, with: provider, asTurn: liveTurnID)
+        run(submittedQuery, with: provider, asTurn: liveTurnID, screenshot: screenshots[liveTurnID])
     }
 
     /// Freezes the answer as it stands.
@@ -198,6 +209,8 @@ final class SearchController: ObservableObject {
     func reset() {
         saveConversation()
         clearConversation()
+        pendingScreenshot = nil
+        captureNotice = nil
         query = ""
         showsHistory = false
         showsShortcuts = false
@@ -205,15 +218,27 @@ final class SearchController: ObservableObject {
     }
 
     /// Asks `q` of `provider`: a follow-up if a conversation is open, a new
-    /// one otherwise.
+    /// one otherwise. A screenshot waiting over the input goes with it — and
+    /// with nothing typed, the question is what the screenshot shows.
     func send(_ q: String, with provider: ProviderKind) {
-        let q = q.trimmingCharacters(in: .whitespacesAndNewlines)
+        let screenshot = pendingScreenshot
+        var q = q.trimmingCharacters(in: .whitespacesAndNewlines)
+        if q.isEmpty, screenshot != nil { q = Self.screenshotQuestion }
         guard !q.isEmpty else { return }
+        if screenshot != nil, !provider.takesScreenshots {
+            // The tray over the input already says why. Nothing's lost: the
+            // question and the picture stay until the provider changes or
+            // the picture goes.
+            NSSound.beep()
+            return
+        }
         if provider == .browser {
             openInBrowser(q)
             return
         }
 
+        pendingScreenshot = nil
+        captureNotice = nil
         showsHistory = false
         if isResultVisible {
             stop()
@@ -223,7 +248,31 @@ final class SearchController: ObservableObject {
             conversationStarted = Date()
         }
         query = ""
-        run(q, with: provider)
+        run(q, with: provider, screenshot: screenshot)
+        requestInputFocus()
+    }
+
+    /// What's asked when a screenshot is sent with nothing typed.
+    static let screenshotQuestion = "What's in this screenshot?"
+
+    // MARK: - Screenshots
+
+    /// Asks the app delegate for a screenshot of the window the user was
+    /// in; it lands in `attach(_:)`.
+    func captureScreen() {
+        NotificationCenter.default.post(name: .flybyShouldCaptureScreen, object: nil)
+    }
+
+    /// The picture waits over the input for the next question.
+    func attach(_ screenshot: Screenshot) {
+        pendingScreenshot = screenshot
+        captureNotice = nil
+        requestInputFocus()
+    }
+
+    func removeScreenshot() {
+        pendingScreenshot = nil
+        captureNotice = nil
         requestInputFocus()
     }
 
@@ -272,6 +321,9 @@ final class SearchController: ObservableObject {
             self.conversationID = conversation.id
             self.conversationStarted = conversation.createdAt
             self.earlierTurns = Array(conversation.turns.dropLast())
+            // Only thumbnails come back from history; follow-ups send those.
+            self.screenshots = [:]
+            self.liveAttachment = last.attachment
             self.submittedQuery = last.query
             self.activeProvider = ProviderKind(rawValue: last.provider) ?? .gemini
             self.answer = last.answer
@@ -347,6 +399,8 @@ final class SearchController: ObservableObject {
             retry()
         case .copy:
             copyAnswer()
+        case .screenshot:
+            captureScreen()
         case .provider(let provider):
             AppSettings.shared.provider = provider
         }
@@ -357,6 +411,7 @@ final class SearchController: ObservableObject {
         case .newChat: return showsPanel
         case .retry:   return offersRetry
         case .copy:    return isResultVisible && !answer.isEmpty
+        case .screenshot: return AppSettings.shared.provider.takesScreenshots
         default:       return true
         }
     }
@@ -379,7 +434,7 @@ final class SearchController: ObservableObject {
 
     /// `turn` is the live turn being asked again; a new question takes the
     /// identity its text carried in the input.
-    private func run(_ raw: String, with provider: ProviderKind, asTurn turn: UUID? = nil) {
+    private func run(_ raw: String, with provider: ProviderKind, asTurn turn: UUID? = nil, screenshot: Screenshot? = nil) {
         let q = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !q.isEmpty else { return }
 
@@ -407,6 +462,8 @@ final class SearchController: ObservableObject {
             nextTurnID = UUID()
         }
         liveTurnDate = Date()
+        screenshots[liveTurnID] = screenshot
+        liveAttachment = screenshot?.attachment
         phase = .working
 
         switch provider {
@@ -419,12 +476,16 @@ final class SearchController: ObservableObject {
             // left, a turn another provider answered) the search's query
             // carries the conversation. The bubble and history keep `q`.
             if earlierTurns.isEmpty {
-                aiMode.search(q)
+                aiMode.search(q, attaching: screenshot)
             } else {
-                aiMode.followUp(q, orSearch: AIModeFollowUp.query(q, after: earlierTurns))
+                aiMode.followUp(q, attaching: screenshot, orSearch: AIModeFollowUp.query(q, after: earlierTurns))
             }
         case .gemini:
-            startGemini(q, context: ChatContext.messages(from: earlierTurns))
+            startGemini(
+                q,
+                image: screenshot?.chatImage,
+                context: ChatContext.messages(from: earlierTurns, images: screenshots.mapValues(\.chatImage))
+            )
         case .appleIntelligence:
             startAppleIntelligence(q, context: AppleIntelligenceProvider.context(from: earlierTurns))
         }
@@ -463,7 +524,8 @@ final class SearchController: ObservableObject {
             provider: activeProvider.rawValue,
             answer: snapshot,
             failure: failure,
-            date: liveTurnDate
+            date: liveTurnDate,
+            attachment: liveAttachment
         )
     }
 
@@ -494,6 +556,9 @@ final class SearchController: ObservableObject {
         answerTask = nil
         aiMode.reset()
         earlierTurns = []
+        screenshots = [:]
+        liveAttachment = nil
+        Screenshot.removeFiles()
         submittedQuery = ""
         activeProvider = nil
         answer = .empty
@@ -513,12 +578,12 @@ final class SearchController: ObservableObject {
 
     // MARK: - Gemini
 
-    private func startGemini(_ q: String, context: [ChatMessage]) {
+    private func startGemini(_ q: String, image: ChatImage?, context: [ChatMessage]) {
         answerTask = Task { [weak self] in
             var markdown = ""
             var sources: [WebSource] = []
             do {
-                for try await event in GeminiProvider.stream(query: q, context: context) {
+                for try await event in GeminiProvider.stream(query: q, image: image, context: context) {
                     guard let self, !Task.isCancelled else { return }
                     switch event {
                     case .text(let chunk):
@@ -604,8 +669,31 @@ final class SearchController: ObservableObject {
     }
 }
 
+/// Said over the input about screenshots.
+enum CaptureNotice: Equatable {
+    /// Screen Recording has never been allowed.
+    case needsPermission
+    /// It was allowed, and macOS has since forgotten: an ad-hoc signed app
+    /// is a different app to macOS after every update.
+    case permissionLost
+    case failed(String)
+}
+
+extension ProviderKind {
+    /// Google and Gemini can be asked about a screenshot; the on-device model
+    /// takes text only, and a browser search can't carry a picture.
+    var takesScreenshots: Bool {
+        switch self {
+        case .aiMode, .gemini:             return true
+        case .appleIntelligence, .browser: return false
+        }
+    }
+}
+
 extension Notification.Name {
     static let quickSearchShouldDismiss = Notification.Name("quickSearchShouldDismiss")
+    /// The screenshot button, `/screenshot`: capture the window the user was in.
+    static let flybyShouldCaptureScreen = Notification.Name("flybyShouldCaptureScreen")
     /// Puts the keyboard back in the input.
     static let flybyShouldFocusInput = Notification.Name("flybyShouldFocusInput")
 }
