@@ -1,6 +1,6 @@
 #!/bin/bash
 # The certificate releases are signed with, so people keep Flyby's Screen
-# Recording, Accessibility and Input Monitoring grants from one update to the
+# Recording (and Full Disk Access) grants from one update to the
 # next — without a Developer ID. build.sh uses it for release builds, and
 # release.sh won't release without it (or a Developer ID).
 #

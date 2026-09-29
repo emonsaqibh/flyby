@@ -14,7 +14,7 @@ people install, and each version of it is built once and frozen.
 | Updates | off — rebuild instead | checks GitHub, offers the install command |
 
 Different bundle IDs mean separate settings, Keychain entries (the Gemini key),
-Google session, open-at-login registration and Accessibility grant. The two run
+Google session, open-at-login registration and Screen Recording grant. The two run
 side by side, and nothing you do in Flyby Dev can touch the installed release.
 
 ## Day to day
@@ -26,8 +26,8 @@ swift test               # FlybyCore unit tests
 ./scripts/dev-signing.sh # once per Mac: a local certificate for dev builds
 ```
 
-With the certificate, Flyby Dev keeps its Screen Recording, Accessibility and
-Input Monitoring grants across rebuilds; ad-hoc signed, it loses them every
+With the certificate, Flyby Dev keeps its Screen Recording (and Full Disk
+Access) grants across rebuilds; ad-hoc signed, it loses them every
 time. Only dev builds on that Mac use it — CI and releases are unaffected.
 
 Building needs Xcode 27 (`build.sh` uses it even when `xcode-select` points at
@@ -94,8 +94,8 @@ user the same command.
 
 ## Signing and notarization
 
-macOS keys Flyby's privacy grants — Screen Recording, Accessibility, Input
-Monitoring — to its code signature. An ad-hoc signature is different on every
+macOS keys Flyby's privacy grants — Screen Recording, and Full Disk Access
+for Safari import — to its code signature. An ad-hoc signature is different on every
 build, so up to 0.5.1 every update was a new app to macOS and people granted
 everything again. From 0.5.2, releases are signed with a self-signed
 **"Flyby Release Signing"** certificate: each release's signature names that

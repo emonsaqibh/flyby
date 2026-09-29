@@ -9,14 +9,12 @@ import SwiftUI
 ///         -FlybyDebugOnboardingStep practice -FlybyDebugPracticeSuccess YES
 ///
 /// - `-FlybyDebugOnboardingStep <step>`: start on `welcome`, `provider`,
-///   `google`, `hotkey`, `accessibility`, `practice`, `screenshot` or `done`.
+///   `google`, `hotkey`, `practice`, `screenshot` or `done`.
 /// - `-FlybyDebugOpen whatsnew`: What's new, as an update shows it.
 /// - `-FlybyDebugOnboardingAutoplay <seconds>`: move on by itself every so
 ///   often, back to the start after the last step, to watch transitions.
 /// - `-FlybyDebugPracticeSuccess YES`: the practice step succeeds on its own,
 ///   a moment after it appears.
-/// - `-FlybyDebugGrantAccessibility <seconds>`: the Accessibility step acts
-///   as if permission landed after that long.
 /// - `-FlybyDebugReduceMotion YES`, `-FlybyDebugReduceTransparency YES`: the
 ///   walkthrough behaves as if those accessibility settings were on, to check
 ///   its fallbacks without changing the Mac's.
@@ -37,9 +35,6 @@ enum OnboardingDebug {
         BuildFlavor.isDev && UserDefaults.standard.bool(forKey: "FlybyDebugPracticeSuccess")
     }
 
-    static var grantsAccessibilityAfter: TimeInterval? {
-        positive("FlybyDebugGrantAccessibility")
-    }
 
     /// Turns Reduce Motion and Reduce Transparency on for the walkthrough
     /// when asked to; otherwise passes the system's settings through.

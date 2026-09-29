@@ -92,38 +92,20 @@ struct SettingsKeyCap: View {
 // MARK: - A whole shortcut
 
 /// A recorded shortcut as key caps — the answer to "what do I press?", which
-/// a line of glyphs like "R⌥ R⌥" only hints at. Told the way onboarding tells
-/// it, in smaller and stiller caps: a double-tap is the key twice, a chord is
-/// its keys side by side, and a side-specific modifier names its side on the
-/// cap ("right option").
+/// a line of glyphs like "⌥/" only hints at. Told the way onboarding tells
+/// it, in smaller and stiller caps.
 struct ShortcutKeyCaps: View {
     let shortcut: Shortcut
 
     var body: some View {
         HStack(spacing: 10) {
-            switch shortcut {
-            case .keyCombo(let keyCode, let modifiers):
-                ForEach(ModifierKey.all(in: modifiers)) { key in
-                    SettingsKeyCap(glyph: key.glyph, name: key.name)
-                }
-                SettingsKeyCap(glyph: Shortcut.keyName(for: keyCode))
-
-            case .modifierChord(let keys):
-                ForEach(keys.sorted { $0.rawValue < $1.rawValue }, id: \.self) { key in
-                    sided(key)
-                }
-
-            case .doubleTap(let key):
-                sided(key)
-                sided(key)
+            ForEach(ModifierKey.all(in: shortcut.modifiers)) { key in
+                SettingsKeyCap(glyph: key.glyph, name: key.name)
             }
+            SettingsKeyCap(glyph: Shortcut.keyName(for: shortcut.keyCode))
         }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(shortcut.voiceOverDescription)
-    }
-
-    private func sided(_ key: TriggerKey) -> some View {
-        SettingsKeyCap(glyph: key.modifier.glyph, name: "\(key.side.lowercased()) \(key.modifier.name)")
     }
 }
 
@@ -148,37 +130,10 @@ private struct ModifierKey: Identifiable {
     }
 }
 
-private extension TriggerKey {
-    var modifier: ModifierKey {
-        switch self {
-        case .leftControl, .rightControl:   return .control
-        case .leftOption, .rightOption:     return .option
-        case .leftShift, .rightShift:       return .shift
-        case .leftCommand, .rightCommand:   return .command
-        }
-    }
-
-    var side: String {
-        switch self {
-        case .leftControl, .leftOption, .leftShift, .leftCommand:       return "Left"
-        case .rightControl, .rightOption, .rightShift, .rightCommand:   return "Right"
-        }
-    }
-}
-
 extension Shortcut {
     /// For VoiceOver, which reads glyphs like "⌥" unevenly: words only.
     var voiceOverDescription: String {
-        switch self {
-        case .keyCombo(let keyCode, let modifiers):
-            let names = ModifierKey.all(in: modifiers).map(\.name.capitalized)
-            return (names + [Shortcut.keyName(for: keyCode)]).joined(separator: " ")
-        case .modifierChord(let keys):
-            let names = keys.sorted { $0.rawValue < $1.rawValue }
-                .map { "\($0.side) \($0.modifier.name.capitalized)" }
-            return names.joined(separator: " plus ") + ", held together"
-        case .doubleTap(let key):
-            return "\(key.side) \(key.modifier.name.capitalized), twice"
-        }
+        let names = ModifierKey.all(in: modifiers).map(\.name.capitalized)
+        return (names + [Shortcut.keyName(for: keyCode)]).joined(separator: " ")
     }
 }

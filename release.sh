@@ -37,7 +37,7 @@ if [[ -n "$(git status --porcelain)" && "${ALLOW_DIRTY:-0}" != 1 ]]; then
 fi
 
 # Every release signed the same way, or it's a new app to macOS and everyone
-# grants Screen Recording, Accessibility and Input Monitoring all over again:
+# grants Screen Recording (and Full Disk Access) all over again:
 # with the release certificate (scripts/release-signing.sh, or its backup
 # imported), or a Developer ID. ALLOW_ADHOC=1 for a throwaway local build.
 if [[ -z "${SIGN_IDENTITY:-}" && "${ALLOW_ADHOC:-0}" != 1 ]] \

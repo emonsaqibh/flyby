@@ -4,10 +4,9 @@ import os
 /// Where Flyby lives on disk, and getting it somewhere it can actually work.
 ///
 /// A menu-bar app has more riding on its location than most. `SMAppService`
-/// registers a *path* for open-at-login, and Accessibility permission is bound
-/// to the exact bundle it was granted to. Run the app straight off the disk
+/// registers a *path* for open-at-login. Run the app straight off the disk
 /// image and macOS hands it a randomised read-only mount — App Translocation —
-/// so both of those break on the next launch, in ways that read as bugs in the
+/// so that breaks on the next launch, in a way that reads as a bug in the
 /// app rather than as "it's still on the DMG".
 enum Installer {
     private static let log = Logger(subsystem: "com.fringecore.flyby", category: "install")
@@ -204,7 +203,7 @@ enum Installer {
     // MARK: - UI
 
     /// Asked once, at launch, before onboarding — moving the app afterwards
-    /// would strand the Accessibility grant onboarding just walked through.
+    /// would strand what onboarding just set up.
     ///
     /// True when the installed copy is being launched to take over. This copy
     /// quits once it has started, so the caller should set nothing else up —
@@ -229,8 +228,8 @@ enum Installer {
         Flyby is running from \(place), where macOS won't let it keep the things \
         it needs.
 
-        Accessibility permission and “Open at login” are both tied to where the \
-        app lives, so from here they'd stop working the next time you launch it.
+        “Open at login” is tied to where the app lives, so from here it would \
+        stop working the next time you launch it.
         """
         alert.addButton(withTitle: "Move to Applications")
         alert.addButton(withTitle: "Not Now")

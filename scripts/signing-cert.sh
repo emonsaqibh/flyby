@@ -2,8 +2,8 @@
 # Makes a self-signed code-signing certificate in the login keychain — what
 # scripts/dev-signing.sh and scripts/release-signing.sh run.
 #
-# macOS keys an app's privacy grants (Screen Recording, Accessibility, Input
-# Monitoring, Full Disk Access) to its signature. An ad-hoc signature changes
+# macOS keys an app's privacy grants (Screen Recording, Full Disk Access) to
+# its signature. An ad-hoc signature changes
 # with every build, so every rebuild — and every update people install — lost
 # them all. Signed with a certificate, a build carries a requirement that
 # names the certificate instead, which the next build signed with it meets:

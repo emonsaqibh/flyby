@@ -61,8 +61,8 @@ struct ScreenshotStep: View {
             // What's keeping the shortcut from working, in place of the
             // small print, while something is.
             Group {
-                if let problem = health.shownScreenshot {
-                    ShortcutProblemNote(problem: problem)
+                if let reason = health.screenshot {
+                    ShortcutProblemNote(reason: reason)
                         .padding(12)
                         .frame(width: 470)
                         .paneGlass(RoundedRectangle(cornerRadius: 16, style: .continuous))
@@ -76,7 +76,7 @@ struct ScreenshotStep: View {
             .padding(.top, 14)
         }
         .animation(.smooth(duration: 0.4), value: settings.screenshotShortcut)
-        .animation(.smooth(duration: 0.4), value: health.shownScreenshot)
+        .animation(.smooth(duration: 0.4), value: health.screenshot)
     }
 
     private var footnote: String {

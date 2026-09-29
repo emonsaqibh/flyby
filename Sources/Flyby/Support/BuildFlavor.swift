@@ -6,7 +6,7 @@ import SwiftUI
 /// development happens in; `./release.sh <version>` makes **Flyby**
 /// (`com.fringecore.flyby`), the frozen build that gets published. Different
 /// bundle identifiers mean separate settings, Keychain entries, Google
-/// session, login item and Accessibility grant — so the two run side by side
+/// session, login item and Screen Recording grant — so the two run side by side
 /// and a dev build can never damage the installed release's state.
 enum BuildFlavor {
     static let isDev = Bundle.main.bundleIdentifier?.hasSuffix(".dev") == true

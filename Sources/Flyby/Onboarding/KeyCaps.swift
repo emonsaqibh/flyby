@@ -22,81 +22,14 @@ struct KeyCapFace: Hashable {
     let short: String
 }
 
-/// How the keys are struck, which is what the demonstration plays.
-enum KeyGesture {
-    /// The same key, twice, quickly.
-    case doubleTap
-    /// Modifiers held together.
-    case chord
-    /// Modifiers held, then a key.
-    case combo
-}
-
 extension Shortcut {
     var keyCaps: [KeyCapFace] {
-        switch self {
-        case .doubleTap(let key):
-            return [key.capFace, key.capFace]
-        case .modifierChord(let keys):
-            // Same order as the shortcut's label, so the two always agree.
-            return keys.sorted { $0.rawValue < $1.rawValue }.map(\.capFace)
-        case .keyCombo(let keyCode, let modifiers):
-            return KeyCapFace.modifiers(modifiers) + [KeyCapFace.key(Shortcut.keyName(for: keyCode))]
-        }
-    }
-
-    var gesture: KeyGesture {
-        switch self {
-        case .doubleTap:     return .doubleTap
-        case .modifierChord: return .chord
-        case .keyCombo:      return .combo
-        }
+        KeyCapFace.modifiers(modifiers) + [KeyCapFace.key(Shortcut.keyName(for: keyCode))]
     }
 
     /// Said to VoiceOver in place of the drawn keys.
     var spokenDescription: String {
-        switch self {
-        case .doubleTap(let key):
-            return "\(key.spokenName), twice"
-        case .modifierChord(let keys):
-            return keys.sorted { $0.rawValue < $1.rawValue }.map(\.spokenName).joined(separator: " and ")
-        case .keyCombo(let keyCode, let modifiers):
-            let names = KeyCapFace.modifiers(modifiers).map(\.name) + [Shortcut.keyName(for: keyCode)]
-            return names.joined(separator: " ")
-        }
-    }
-}
-
-private extension TriggerKey {
-    var capFace: KeyCapFace {
-        KeyCapFace(kind: .modifier(symbol: modifierSymbol), name: "\(side) \(modifierName)", short: label)
-    }
-
-    var spokenName: String { "\(side) \(modifierName)".capitalized }
-
-    private var side: String {
-        switch self {
-        case .leftControl, .leftShift, .leftCommand, .leftOption: return "left"
-        case .rightControl, .rightShift, .rightCommand, .rightOption: return "right"
-        }
-    }
-
-    private var modifierSymbol: String {
-        switch self {
-        case .leftControl, .rightControl: return "⌃"
-        case .leftShift, .rightShift:     return "⇧"
-        case .leftCommand, .rightCommand: return "⌘"
-        case .leftOption, .rightOption:   return "⌥"
-        }
-    }
-
-    private var modifierName: String {
-        switch self {
-        case .leftControl, .rightControl: return "control"
-        case .leftShift, .rightShift:     return "shift"
-        case .leftCommand, .rightCommand: return "command"
-        case .leftOption, .rightOption:   return "option"
-        }
+        (KeyCapFace.modifiers(modifiers).map(\.name) + [Shortcut.keyName(for: keyCode)]).joined(separator: " ")
     }
 }
 
@@ -125,7 +58,7 @@ private extension KeyCapFace {
 /// The shortcut's keys, big and glassy, optionally acting the gesture out.
 struct KeyCapsView: View {
     enum Mode: Equatable {
-        /// Plays the gesture on a loop: tap-tap, hold-together, hold-then-press.
+        /// Plays the combo on a loop: modifiers held, then the key.
         case demonstrate
         /// Waiting for the user to do it: a slow, soft pulse of light.
         case waiting
@@ -184,30 +117,16 @@ struct KeyCapsView: View {
         }
     }
 
+    /// The modifiers held, then the key pressed.
     private func demonstrate(_ count: Int) async {
-        switch shortcut.gesture {
-        case .doubleTap:
-            for index in 0..<count {
-                await press([index], for: 0.12)
-                try? await Task.sleep(for: .seconds(0.1))
-            }
-        case .chord:
-            for index in 0..<count {
-                hold(index)
-                try? await Task.sleep(for: .seconds(0.12))
-            }
-            try? await Task.sleep(for: .seconds(0.7))
-            withAnimation(.spring(duration: 0.3, bounce: 0.35)) { pressed = [] }
-        case .combo:
-            for index in 0..<(count - 1) {
-                hold(index)
-                try? await Task.sleep(for: .seconds(0.14))
-            }
-            try? await Task.sleep(for: .seconds(0.12))
-            await press([count - 1], for: 0.16)
-            try? await Task.sleep(for: .seconds(0.2))
-            withAnimation(.spring(duration: 0.3, bounce: 0.35)) { pressed = [] }
+        for index in 0..<(count - 1) {
+            hold(index)
+            try? await Task.sleep(for: .seconds(0.14))
         }
+        try? await Task.sleep(for: .seconds(0.12))
+        await press([count - 1], for: 0.16)
+        try? await Task.sleep(for: .seconds(0.2))
+        withAnimation(.spring(duration: 0.3, bounce: 0.35)) { pressed = [] }
     }
 
     private func press(_ indices: Set<Int>, for duration: TimeInterval) async {

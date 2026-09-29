@@ -1,7 +1,7 @@
 import SwiftUI
 
-// The second half: the gesture that summons Flyby, the one permission some
-// gestures need, a real try of it, and the send-off.
+// The second half: the shortcut that summons Flyby, a real try of it, and
+// the send-off.
 
 // MARK: - Shortcut
 
@@ -55,106 +55,7 @@ struct ShortcutStep: View {
     }
 
     private var footnote: String {
-        if case .keyCombo = settings.shortcut {
-            return "Key combos work without any special permission."
-        }
-        return "Double-taps and chords need one Accessibility approval; key combos don't."
-    }
-}
-
-// MARK: - Accessibility
-
-/// The gate for modifier-only gestures. Moves itself on the moment the
-/// switch is flipped; the button in the footer is only an escape hatch.
-struct AccessibilityStep: View {
-    let isTrusted: Bool
-
-    var body: some View {
-        VStack(spacing: 0) {
-            StepHeader(
-                title: "Two switches to flip",
-                subtitle: "macOS only shares modifier-only gestures with apps you approve."
-            )
-
-            VStack(alignment: .leading, spacing: 14) {
-                grant(
-                    symbol: "accessibility", color: .blue,
-                    title: "Turn on Flyby under Accessibility",
-                    path: "System Settings › Privacy & Security › Accessibility"
-                )
-                grant(
-                    symbol: "keyboard", color: .indigo,
-                    title: "And under Input Monitoring",
-                    path: "Same place, a little further down. macOS may ask to reopen Flyby."
-                )
-
-                Divider()
-
-                HStack(spacing: 10) {
-                    status
-                    Spacer(minLength: 8)
-                    if !isTrusted {
-                        Button("Open System Settings") {
-                            HotKeyMonitor.requestKeyboardAccess()
-                            HotKeyMonitor.openKeyboardAccessSettings()
-                        }
-                        .buttonStyle(.glass)
-                        .transition(SoftSwapTransition())
-                    }
-                }
-                .frame(minHeight: 30)
-            }
-            .frame(width: 470)
-            .glassCard()
-            .reveal(.content, blurs: false)
-            .padding(.top, 26)
-
-            StepFootnote("Flyby only listens for your shortcut. Nothing you type is recorded.")
-                .reveal(.footnote)
-                .padding(.top, 16)
-        }
-        .animation(.spring(duration: 0.5, bounce: 0.25), value: isTrusted)
-    }
-
-    private func grant(symbol: String, color: Color, title: String, path: String) -> some View {
-        HStack(spacing: 14) {
-            IconBadge(symbol, color: color, size: 44)
-            VStack(alignment: .leading, spacing: 3) {
-                Text(title)
-                    .font(.system(size: 14, weight: .semibold))
-                Text(path)
-                    .font(.system(size: 12))
-                    .foregroundStyle(.secondary)
-            }
-        }
-    }
-
-    /// Waiting, then — the moment both grants land — a check that draws
-    /// itself in.
-    @ViewBuilder
-    private var status: some View {
-        if isTrusted {
-            HStack(spacing: 8) {
-                Image(systemName: "checkmark.circle.fill")
-                    .font(.system(size: 20))
-                    .symbolRenderingMode(.palette)
-                    .foregroundStyle(.white, .green)
-                    .transition(.symbolEffect(.drawOn))
-                Text("Permission granted")
-                    .font(.system(size: 13, weight: .medium))
-            }
-            .transition(SoftSwapTransition())
-            .accessibilityElement(children: .combine)
-        } else {
-            HStack(spacing: 8) {
-                ProgressView().controlSize(.small)
-                Text("Waiting for approval…")
-                    .font(.system(size: 13))
-                    .foregroundStyle(.secondary)
-            }
-            .transition(SoftSwapTransition())
-            .accessibilityElement(children: .combine)
-        }
+        "Hold modifiers and press a key — no special permission needed."
     }
 }
 

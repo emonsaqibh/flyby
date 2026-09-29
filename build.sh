@@ -1,7 +1,7 @@
 #!/bin/bash
 # Builds Flyby. There are two builds, with different bundle identifiers, so they
 # keep separate settings, Keychain entries, Google session, login item and
-# Accessibility grant, and can run side by side:
+# Screen Recording grant, and can run side by side:
 #
 #   ./build.sh               → build/Flyby Dev.app   com.fringecore.flyby.dev
 #                              and a copy kept in dev-builds/<version>/
@@ -22,8 +22,8 @@
 # and their compiler plugin ships with Xcode, not the Command Line Tools — so
 # when xcode-select points at the CLT, Xcode is used for this build anyway.
 #
-# Signing: macOS keys Flyby's privacy grants (Screen Recording, Accessibility,
-# Input Monitoring) to its signature, and an ad-hoc signature changes with every
+# Signing: macOS keys Flyby's privacy grants (Screen Recording, Full Disk
+# Access) to its signature, and an ad-hoc signature changes with every
 # build — so a build signed that way loses them all, on every rebuild and every
 # update. So each flavor is signed with this Mac's certificate for it when there
 # is one: "Flyby Dev Local Signing" (scripts/dev-signing.sh) and "Flyby Release

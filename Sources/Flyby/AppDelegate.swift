@@ -18,8 +18,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let hotKeys = HotKeyMonitor()
     /// ⌥⇧Space by default: a screenshot of the window you're in, into Flyby.
     private let screenshotHotKeys = HotKeyMonitor(number: 2) { AppSettings.shared.screenshotShortcut }
-    private var screenshotPermissionPoll: Task<Void, Never>?
-    private var hasAskedForScreenshotAccessibility = false
     /// The main shortcut's state, as `installShortcut` last found it.
     private var mainShortcutHealth: ShortcutHealth = .ok
     private var isCapturing = false
@@ -36,13 +34,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// walkthrough.
     private var isShowingWhatsNew = false
     private var statusItem: NSStatusItem?
-    private var accessibilityMenuItem: NSMenuItem?
     private var shortcutProblemMenuItem: NSMenuItem?
     private var updateMenuItem: NSMenuItem?
     private var outsideClickMonitor: Any?
     private var keyMonitor: Any?
-    private var permissionPoll: Task<Void, Never>?
-    private var hasShownAccessibilityAlert = false
     /// The last "that combo is taken" message shown, so reinstalling the same
     /// broken shortcut twice in a row (recorder commit, then the settings
     /// change) doesn't alert twice.
@@ -55,7 +50,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// What the menu bar icon says about the shortcut.
     private enum ShortcutHealth {
         case ok
-        case needsAccessibility
         case unavailable(String)
     }
 
@@ -112,6 +106,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         observeUpdates()
         observeGoogleSettingsRequests()
         Self.log.info("launch-at-login status=\(String(describing: SMAppService.mainApp.status), privacy: .public)")
+        announceReplacedShortcutIfNeeded()
     }
 
     private var ownsKeyWindow: Bool {
@@ -425,7 +420,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func observeInstaller() {
         NotificationCenter.default.publisher(for: Installer.willRelaunch)
             .sink { [weak self] _ in
-                self?.stopPermissionPoll()
                 self?.hotKeys.stop()
                 self?.screenshotHotKeys.stop()
             }
@@ -433,7 +427,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NotificationCenter.default.publisher(for: Installer.relaunchDidFail)
             .receive(on: RunLoop.main)
             .sink { [weak self] _ in
-                self?.installShortcut(promptIfNeeded: false, reportProblems: false)
+                self?.installShortcut(reportProblems: false)
                 self?.installScreenshotShortcut(reportProblems: false)
             }
             .store(in: &cancellables)
@@ -453,40 +447,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             NotificationCenter.default.post(name: .flybyDidTriggerShortcut, object: nil)
             self?.toggleFlyby()
         }
-        hotKeys.onAccessibilityLost = { [weak self] in
-            // Revoked while running. Same state as a launch without the grant:
-            // the menu bar says so and the poll waits for it to come back.
-            self?.installShortcut(promptIfNeeded: false, reportProblems: false)
-        }
-        // During onboarding the flow owns the permission conversation — no
-        // alert on top of it. Nor when What's new is about to show: it asks
-        // for the grants itself.
-        let onboarded = AppSettings.shared.hasCompletedOnboarding
-        let prompts = onboarded && !AppSettings.shared.needsWhatsNew
-        installShortcut(promptIfNeeded: prompts, reportProblems: onboarded)
-
-        // Re-install when the user records a different shortcut: the Carbon and
-        // event-tap paths aren't interchangeable, so this is a real rebuild.
-        // A combo that turns out to be taken is reported even mid-onboarding —
-        // the user just chose it and needs to know.
+        // A combo another app owns is said out loud when the user has just
+        // chosen it — mid-onboarding too — and at launch only by the menu bar.
+        installShortcut(reportProblems: AppSettings.shared.hasCompletedOnboarding)
         AppSettings.shared.$shortcut
             .dropFirst()
             .removeDuplicates()
             .receive(on: RunLoop.main)
-            .sink { [weak self] _ in
-                self?.installShortcut(
-                    promptIfNeeded: AppSettings.shared.hasCompletedOnboarding,
-                    reportProblems: true
-                )
-            }
+            .sink { [weak self] _ in self?.installShortcut(reportProblems: true) }
             .store(in: &cancellables)
 
         screenshotHotKeys.onTrigger = { [weak self] in self?.captureScreen() }
-        // As for the main shortcut: a gesture whose tap stops for want of
-        // Accessibility comes back, through the poll, once it's granted.
-        screenshotHotKeys.onAccessibilityLost = { [weak self] in
-            self?.installScreenshotShortcut(reportProblems: false)
-        }
         installScreenshotShortcut(reportProblems: false)
         AppSettings.shared.$screenshotShortcut
             .dropFirst()
@@ -496,39 +467,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             .store(in: &cancellables)
     }
 
-    /// The screenshot shortcut is quieter about trouble than the main one:
-    /// nothing in the menu bar and no alert of its own — macOS's own
-    /// Accessibility and Input Monitoring prompts, once a launch, when it's a
-    /// modifier-only gesture that needs them (not during onboarding, which owns that conversation);
-    /// a poll that brings it up once the grant arrives; and word when a combo
-    /// the user just recorded is taken.
+    /// Like the main shortcut: a combo another app owns is said under the
+    /// recorder, in the menu bar, and — when the user has just chosen it —
+    /// out loud.
     private func installScreenshotShortcut(reportProblems: Bool) {
-        screenshotPermissionPoll?.cancel()
-        screenshotPermissionPoll = nil
         switch screenshotHotKeys.reload() {
         case .active, .off:
             setScreenshotProblem(nil)
         case .paused:
             break
-        case .needsAccessibility:
-            setScreenshotProblem(.needsKeyboardAccess)
-            if !hasAskedForScreenshotAccessibility, AppSettings.shared.hasCompletedOnboarding {
-                hasAskedForScreenshotAccessibility = true
-                HotKeyMonitor.requestKeyboardAccess()
-            }
-            screenshotPermissionPoll = Task { @MainActor [weak self] in
-                while !Task.isCancelled {
-                    try? await Task.sleep(nanoseconds: 1_000_000_000)
-                    guard !Task.isCancelled, let self else { return }
-                    if self.screenshotHotKeys.isPaused || !HotKeyMonitor.hasKeyboardAccess { continue }
-                    if self.screenshotHotKeys.reload() != .needsAccessibility {
-                        self.setScreenshotProblem(nil)
-                        return
-                    }
-                }
-            }
         case .unavailable(let reason):
-            setScreenshotProblem(.unavailable(reason))
+            setScreenshotProblem(reason)
             if reportProblems, reason != lastReportedProblem {
                 lastReportedProblem = reason
                 Task { @MainActor [weak self] in self?.presentUnavailableAlert(reason) }
@@ -536,55 +485,37 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    /// Said under the screenshot recorder, and — the menu bar being the one
-    /// place a dead shortcut can be noticed from — there too.
-    private func setScreenshotProblem(_ problem: ShortcutHealthModel.Problem?) {
+    private func setScreenshotProblem(_ problem: String?) {
         ShortcutHealthModel.shared.screenshot = problem
         refreshStatusItem()
     }
 
-    /// The recorder has the keyboard: pause the live shortcut (which also
-    /// unregisters a Carbon combo, so it can be re-recorded), and bring it
-    /// back once recording ends however it ends.
+    /// The recorder has the keyboard: pause the live shortcuts (which also
+    /// unregisters them, so the same combo can be recorded again), and bring
+    /// them back once recording ends however it ends.
     private func setRecording(_ recording: Bool) {
         if recording {
-            stopPermissionPoll()
             // A fresh attempt: re-recording the same taken combo should say so again.
             lastReportedProblem = nil
             hotKeys.isPaused = true
-            // Either recorder: a registered combo swallows its keystroke
-            // before a recorder can see it, and neither shortcut should fire
-            // while the other is being recorded.
+            // Either recorder: neither shortcut should fire while the other
+            // is being recorded.
             screenshotHotKeys.isPaused = true
         } else {
             guard hotKeys.isPaused else { return }
             hotKeys.isPaused = false
             screenshotHotKeys.isPaused = false
-            installShortcut(promptIfNeeded: false, reportProblems: true)
+            installShortcut(reportProblems: true)
             installScreenshotShortcut(reportProblems: true)
         }
     }
 
-    private func installShortcut(promptIfNeeded: Bool, reportProblems: Bool) {
-        stopPermissionPoll()
-
+    private func installShortcut(reportProblems: Bool) {
         switch hotKeys.reload() {
         case .active, .paused, .off:
             lastReportedProblem = nil
             updateStatusItem(.ok)
-
-        case .needsAccessibility:
-            // Only a modifier-only gesture can fail this way, and only for want
-            // of Accessibility or Input Monitoring.
-            updateStatusItem(.needsAccessibility)
-            if promptIfNeeded {
-                HotKeyMonitor.requestKeyboardAccess()
-                presentAccessibilityAlert()
-            }
-            startPermissionPoll()
-
         case .unavailable(let reason):
-            // No poll: waiting won't free a combo another app owns.
             updateStatusItem(.unavailable(reason))
             if reportProblems, reason != lastReportedProblem {
                 lastReportedProblem = reason
@@ -596,71 +527,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    /// Checks every second, so the shortcut starts working the moment
-    /// permission is granted, without needing a relaunch.
-    private func startPermissionPoll() {
-        permissionPoll?.cancel()
-        permissionPoll = Task { @MainActor [weak self] in
-            while !Task.isCancelled {
-                try? await Task.sleep(nanoseconds: 1_000_000_000)
-                guard !Task.isCancelled, let self else { return }
-                // The recorder owns the keyboard; it reinstalls when it's done.
-                if self.hotKeys.isPaused { continue }
-
-                switch self.hotKeys.reload() {
-                case .needsAccessibility, .paused:
-                    continue
-                case .active, .off:
-                    self.permissionPoll = nil
-                    self.updateStatusItem(.ok)
-                    return
-                case .unavailable(let reason):
-                    self.permissionPoll = nil
-                    self.updateStatusItem(.unavailable(reason))
-                    return
-                }
-            }
-        }
-    }
-
-    private func stopPermissionPoll() {
-        permissionPoll?.cancel()
-        permissionPoll = nil
-    }
-
-    /// Silent failure here is the worst outcome — the shortcut just does
-    /// nothing and there's no way to tell why — so say it out loud, once.
-    private func presentAccessibilityAlert() {
-        guard !hasShownAccessibilityAlert else { return }
-        hasShownAccessibilityAlert = true
-
-        // By the bundle's own name: the dev build is listed as "Flyby Dev".
+    /// Shortcuts became key combos only in 0.6. Someone whose double-tap or
+    /// chord was replaced by the default hears it once, rather than finding
+    /// their shortcut quietly doing nothing.
+    private func announceReplacedShortcutIfNeeded() {
+        guard AppSettings.shared.replacedRetiredShortcut, AppSettings.shared.hasCompletedOnboarding else { return }
         let name = BuildFlavor.appName
         let alert = NSAlert()
-        alert.messageText = "\(name) needs permission to see your shortcut"
+        alert.messageText = "\(name) now opens with \(AppSettings.shared.shortcut.displayString)"
         alert.informativeText = """
-        Your shortcut is a modifier-only gesture, and macOS only shares those \
-        with apps approved twice, in System Settings › Privacy & Security:
+        Double-tap and held-modifier shortcuts are gone: on this version of macOS \
+        they needed two privacy permissions that updates kept taking away. \
+        Shortcuts are key combos now, which need none.
 
-        • Accessibility
-        • Input Monitoring
-
-        Turn on “\(name)” in both. Accessibility takes effect within a second; \
-        after Input Monitoring, macOS may ask to reopen \(name).
-
-        If it's already listed, remove it with the − button and add it again: \
-        an update changes the app's signature and invalidates the old entry.
-
-        You can also avoid this entirely by recording a shortcut that includes \
-        a regular key, like ⌥Space — those need no permission at all.
+        Keep \(AppSettings.shared.shortcut.displayString), or record your own in Settings › Shortcut.
         """
-        alert.addButton(withTitle: "Open System Settings")
-        alert.addButton(withTitle: "Later")
-        alert.alertStyle = .warning
-
+        alert.addButton(withTitle: "OK")
+        alert.addButton(withTitle: "Change It…")
         NSApp.activate()
-        if alert.runModal() == .alertFirstButtonReturn {
-            HotKeyMonitor.openKeyboardAccessSettings()
+        if alert.runModal() == .alertSecondButtonReturn {
+            SettingsNavigation.shared.section = .shortcut
+            openSettings()
         }
     }
 
@@ -923,11 +810,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         case .ok:
             return NSImage(systemSymbolName: "sparkle.magnifyingglass", accessibilityDescription: "Flyby")
                 ?? NSImage(systemSymbolName: "magnifyingglass", accessibilityDescription: "Flyby")
-        case .needsAccessibility:
-            return NSImage(
-                systemSymbolName: "exclamationmark.triangle",
-                accessibilityDescription: "Flyby — needs permission for its shortcut"
-            )
         case .unavailable:
             return NSImage(
                 systemSymbolName: "exclamationmark.triangle",
@@ -941,13 +823,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         item.button?.image = Self.statusImage(for: .ok)
 
         let menu = NSMenu()
-        let permissionItem = NSMenuItem(
-            title: "Allow Your Shortcut…",
-            action: #selector(openAccessibilitySettings),
-            keyEquivalent: ""
-        )
-        permissionItem.isHidden = true
-        menu.addItem(permissionItem)
         let problemItem = NSMenuItem(
             title: "Shortcut Unavailable — Change It…",
             action: #selector(openSettings),
@@ -971,7 +846,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         item.button?.toolTip = "\(BuildFlavor.appName) \(BuildFlavor.versionLabel)"
         statusItem = item
         updateMenuItem = updateItem
-        accessibilityMenuItem = permissionItem
         shortcutProblemMenuItem = problemItem
     }
 
@@ -980,42 +854,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// screenshot one's. The recorders say it too.
     private func updateStatusItem(_ health: ShortcutHealth) {
         mainShortcutHealth = health
-        let model = ShortcutHealthModel.shared
         switch health {
-        case .ok:                       model.main = nil
-        case .needsAccessibility:       model.main = .needsKeyboardAccess
-        case .unavailable(let reason):  model.main = .unavailable(reason)
+        case .ok:                       ShortcutHealthModel.shared.main = nil
+        case .unavailable(let reason):  ShortcutHealthModel.shared.main = reason
         }
         refreshStatusItem()
     }
 
     private func refreshStatusItem() {
         var health = mainShortcutHealth
-        if case .ok = health {
-            switch ShortcutHealthModel.shared.screenshot {
-            case .needsKeyboardAccess:      health = .needsAccessibility
-            case .unavailable(let reason):  health = .unavailable(reason)
-            case nil:                       break
-            }
+        if case .ok = health, let reason = ShortcutHealthModel.shared.screenshot {
+            health = .unavailable(reason)
         }
         switch health {
         case .ok:
-            accessibilityMenuItem?.isHidden = true
-            shortcutProblemMenuItem?.isHidden = true
-        case .needsAccessibility:
-            accessibilityMenuItem?.isHidden = false
             shortcutProblemMenuItem?.isHidden = true
         case .unavailable(let reason):
-            accessibilityMenuItem?.isHidden = true
             shortcutProblemMenuItem?.isHidden = false
             shortcutProblemMenuItem?.toolTip = reason
         }
         statusItem?.button?.image = Self.statusImage(for: health)
-    }
-
-    @objc private func openAccessibilitySettings() {
-        HotKeyMonitor.requestKeyboardAccess()
-        HotKeyMonitor.openKeyboardAccessSettings()
     }
 
     // MARK: - Updates
@@ -1180,12 +1038,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         isShowingWhatsNew = false
         onboardingWindow?.orderOut(nil)
         onboardingWindow = nil
-        // If the Accessibility gate was skipped, the poll keeps trying and the
-        // menu bar carries the warning — same as any other launch.
         if hotKeys.isPaused {
             setRecording(false)
         } else {
-            installShortcut(promptIfNeeded: false, reportProblems: false)
+            installShortcut(reportProblems: false)
         }
     }
 

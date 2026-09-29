@@ -39,7 +39,7 @@ https://github.com/user-attachments/assets/531b2578-ca2c-4a6a-878a-0fcc9f19fd4e
 
 **Flyby** is a lightweight, menu-bar-only macOS utility (`LSUIElement`) designed to eliminate context switching.
 
-Press your shortcut (default: **double-tap Right ⌥**), and a dark, Siri-style floating glass bar appears at the bottom of your screen over whatever application you are working in. Type your question, hit `Return`, and the bar fluidly morphs into an answer card with streamed answers and cited sources.
+Press your shortcut (default: **⌥/**), and a dark, Siri-style floating glass bar appears at the bottom of your screen over whatever application you are working in. Type your question, hit `Return`, and the bar fluidly morphs into an answer card with streamed answers and cited sources.
 
 - **Zero Window Jitter:** Operates seamlessly across full-screen spaces, IDEs, and browsers without stealing focus away from your active work.
 - **Multimodal Screen Querying:** Capture and ask about your active window with a single hotkey.
@@ -69,7 +69,7 @@ Press your shortcut (default: **double-tap Right ⌥**), and a dark, Siri-style 
   Conversations are stored locally on your Mac (`~/Library/Application Support/`). Zero telemetry, zero external trackers, and no middleman servers.
 
 - **⌨️ Deep Keyboard Flow**  
-  Full keyboard navigation, slash commands (`/google`, `/gemini`, `/apple`, `/screenshot`, `/copy`), and a flexible shortcut recorder supporting key combos, modifier chords, and double-taps.
+  Full keyboard navigation, slash commands (`/google`, `/gemini`, `/apple`, `/screenshot`, `/copy`), and a shortcut recorder for any key combo — no permissions needed.
 
 ---
 
@@ -117,10 +117,10 @@ Uses macOS 27's native `FoundationModels` framework. No accounts, no API keys, a
 ### Global Triggers
 | Shortcut | Action |
 | :--- | :--- |
-| **Double-tap Right ⌥** *(Default)* | Open / Dismiss Flyby bar |
+| **⌥/** *(Default)* | Open / Dismiss Flyby bar |
 | **⌥⇧Space** *(Default)* | Capture active window and open Flyby with screenshot attached |
 
-*(All triggers are fully customizable in Settings › Shortcut. Supports standard key combos, modifier chords, and double-taps.)*
+*(Both are customizable in Settings › Shortcut. Shortcuts are key combos — a key with modifiers — which macOS delivers with no permissions at all. Double-taps and held-modifier chords were removed in 0.6: they needed Accessibility and Input Monitoring.)*
 
 ### In-App Navigation
 | Key | Action |
@@ -161,7 +161,7 @@ Type `/` at the beginning of the input field to trigger quick actions:
 * **Local-First Storage:** All conversation history is saved exclusively on your local Mac in `~/Library/Application Support/com.fringecore.flyby/History/`. Flyby does not operate cloud sync servers or telemetry endpoints.
 * **On-Device Cookie Syncing:** Google session sync reads only `google.*` session cookies from local browser databases on your Mac. These tokens never leave your machine.
 * **Permissions Transparency:**
-  * **Accessibility & Input Monitoring:** Only requested if you configure a modifier-only shortcut (like double-tap Option or modifier chords) so macOS can register flag changes. Standard key combinations (like `⌥Space`) require **no permissions at all**.
+  * **No keyboard permissions:** Shortcuts are key combos, which need no Accessibility or Input Monitoring at all — Flyby never asks for either.
   * **Screen Recording:** Only requested when you explicitly invoke the screenshot feature (`⌥⇧Space` or `/screenshot`). Flyby captures only the active window, never your background screen.
 
 ---
@@ -212,7 +212,7 @@ Sources/
     ├── FlybyPanel.swift     # Smoked liquid glass window & spring physics
     ├── InputBar.swift       # Siri-style floating input pill & provider chip
     ├── AnswerCard.swift     # Expanding card, source chips, and action buttons
-    ├── HotKeyMonitor.swift  # Carbon hotkeys & CGEventTap double-tap monitors
+    ├── HotKeyMonitor.swift  # Carbon hot keys (key combos, no permissions)
     └── SettingsUI/          # Native macOS split-view settings interface
 ```
 

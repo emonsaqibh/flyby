@@ -3,13 +3,12 @@ import AppKit
 import Combine
 
 /// The first-launch walkthrough: greet, pick a provider (and connect
-/// Google, if that provider is AI Mode), record the trigger, clear the
-/// Accessibility gate if the trigger needs it, prove the whole thing works by
-/// actually firing it once, then meet the screenshot shortcut.
+/// Google, if that provider is AI Mode), record the shortcut, prove it works
+/// by actually firing it once, then meet the screenshot shortcut.
 ///
 /// As **What's new**, for an install that finished the walkthrough before
-/// something worth showing arrived, it's just the new steps: the screenshot
-/// shortcut, after the gate when the trigger needs a grant it lacks.
+/// something worth showing arrived, it's just the new step: the screenshot
+/// shortcut.
 ///
 /// One step at a time on a glowing aura, with very little text: a headline
 /// that writes itself in, a line under it, and one thing to do. The steps
@@ -18,7 +17,7 @@ import Combine
 struct OnboardingView: View {
     /// In the order they're shown. Which ones are shown is `visibleSteps`.
     enum Step: Int, CaseIterable {
-        case welcome, provider, google, hotkey, accessibility, practice, screenshot, done
+        case welcome, provider, google, hotkey, practice, screenshot, done
     }
 
     enum Mode {
@@ -39,20 +38,12 @@ struct OnboardingView: View {
 
     @State private var step: Step
     @State private var direction: OnboardingDirection = .forward
-    @State private var axTrusted = HotKeyMonitor.hasKeyboardAccess
     @State private var practiceSucceeded = false
     /// When the practice shortcut last fired, for the aura's burst of light.
     @State private var celebratedAt: Date?
     /// The footer and progress arrive after the welcome does, so the first
     /// thing on screen is the product, not the controls.
     @State private var chromeShown = false
-    /// Permission landed, and the step is holding a beat to show it before
-    /// moving on.
-    @State private var leavingAccessibility = false
-    /// Dev builds: stands in for a real grant (`OnboardingDebug`).
-    @State private var debugTrusted = false
-
-    private let axPoll = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
 
     init(mode: Mode = .walkthrough, onRecordingChanged: @escaping (Bool) -> Void, onFinished: @escaping () -> Void) {
         self.mode = mode
@@ -63,10 +54,7 @@ struct OnboardingView: View {
         case .walkthrough:
             first = .welcome
         case .whatsNew:
-            // The gate first, when the trigger needs a grant it lacks: an
-            // update is where a modifier gesture loses them.
-            if case .keyCombo = AppSettings.shared.shortcut { first = .screenshot }
-            else { first = HotKeyMonitor.hasKeyboardAccess ? .screenshot : .accessibility }
+            first = .screenshot
         }
         _step = State(initialValue: OnboardingDebug.initialStep ?? first)
     }
@@ -96,7 +84,6 @@ struct OnboardingView: View {
         }
         .frame(width: Self.size.width, height: Self.size.height)
         .ignoresSafeArea()
-        .onReceive(axPoll) { _ in pollAccessibility() }
         .onReceive(NotificationCenter.default.publisher(for: .flybyDidTriggerShortcut)) { _ in
             if step == .practice, !practiceSucceeded { celebrate() }
         }
@@ -124,8 +111,6 @@ struct OnboardingView: View {
             GoogleStep()
         case .hotkey:
             ShortcutStep(settings: settings, onRecordingChanged: onRecordingChanged)
-        case .accessibility:
-            AccessibilityStep(isTrusted: axTrusted)
         case .practice:
             PracticeStep(shortcut: settings.shortcut, succeeded: practiceSucceeded)
         case .screenshot:
@@ -143,7 +128,6 @@ struct OnboardingView: View {
         case .provider:      return 1.4
         case .google:        return 2.1
         case .hotkey:        return 3.0
-        case .accessibility: return 3.7
         case .practice:      return 4.5
         case .screenshot:    return 5.1
         case .done:          return 5.8
@@ -229,7 +213,6 @@ struct OnboardingView: View {
         switch step {
         case .welcome:                            return "Get Started"
         case .google where !google.isConnected:   return "Skip for Now"
-        case .accessibility where !axTrusted:     return "Skip for Now"
         case .practice where !practiceSucceeded:  return "Skip"
         case .done:                               return "Start Using Flyby"
         case _ where step == visibleSteps.last:   return "Done"
@@ -240,30 +223,12 @@ struct OnboardingView: View {
     /// The steps this user will actually walk through, in order. Drives both
     /// navigation and the progress capsules, so progress never promises a
     /// step that won't come.
-    ///
-    /// The Accessibility gate stays in the list while it's on screen even
-    /// once permission lands, so its capsule doesn't vanish under the user in
-    /// the moment before the step moves itself on.
     private var visibleSteps: [Step] {
-        if mode == .whatsNew {
-            var steps: [Step] = []
-            if shapeNeedsAccessibility, !axTrusted || step == .accessibility { steps.append(.accessibility) }
-            steps.append(.screenshot)
-            return steps
-        }
+        if mode == .whatsNew { return [.screenshot] }
         var steps: [Step] = [.welcome, .provider]
         if settings.provider == .aiMode { steps.append(.google) }
-        steps.append(.hotkey)
-        if shapeNeedsAccessibility, !axTrusted || step == .accessibility {
-            steps.append(.accessibility)
-        }
-        steps.append(contentsOf: [.practice, .screenshot, .done])
+        steps.append(contentsOf: [.hotkey, .practice, .screenshot, .done])
         return steps
-    }
-
-    private var shapeNeedsAccessibility: Bool {
-        if case .keyCombo = settings.shortcut { return false }
-        return true
     }
 
     // MARK: - Navigation
@@ -277,9 +242,6 @@ struct OnboardingView: View {
     }
 
     private func advance() {
-        // Read fresh rather than trusting the last poll: permission granted in
-        // the last second shouldn't route through the gate.
-        axTrusted = isTrusted
         guard let next = visibleSteps.first(where: { $0.rawValue > step.rawValue }) else { return }
         go(to: next, direction: .forward)
     }
@@ -297,30 +259,6 @@ struct OnboardingView: View {
         self.direction = direction
         withAnimation(reduceMotion ? .easeInOut(duration: 0.2) : .smooth(duration: 0.26)) {
             step = target
-        }
-    }
-
-    // MARK: - Accessibility gate
-
-    /// Accessibility and Input Monitoring both: a modifier-only gesture
-    /// needs the two.
-    private var isTrusted: Bool {
-        HotKeyMonitor.hasKeyboardAccess || debugTrusted
-    }
-
-    private func pollAccessibility() {
-        let trusted = isTrusted
-        if trusted != axTrusted {
-            withAnimation(.spring(duration: 0.5, bounce: 0.25)) { axTrusted = trusted }
-        }
-        // The moment permission lands, the gate step has done its job — after
-        // a beat, so the check is seen landing.
-        guard step == .accessibility, trusted, !leavingAccessibility else { return }
-        leavingAccessibility = true
-        Task { @MainActor in
-            try? await Task.sleep(for: .seconds(1.1))
-            leavingAccessibility = false
-            if step == .accessibility { advance() }
         }
     }
 
@@ -350,12 +288,6 @@ struct OnboardingView: View {
             try? await Task.sleep(for: .seconds(1.6))
             guard !Task.isCancelled else { return }
             NotificationCenter.default.post(name: .flybyDidTriggerShortcut, object: nil)
-        }
-        if step == .accessibility, let delay = OnboardingDebug.grantsAccessibilityAfter {
-            try? await Task.sleep(for: .seconds(delay))
-            guard !Task.isCancelled else { return }
-            debugTrusted = true
-            pollAccessibility()
         }
     }
 }

@@ -1,118 +1,63 @@
 import AppKit
 import Carbon.HIToolbox
 
-/// A user-recorded trigger.
+/// A user-recorded shortcut: a key and its modifiers — ⌥/, ⌥⇧Space.
 ///
-/// Three genuinely different shapes, because macOS treats them differently:
-/// a normal hotkey is a key plus modifiers; a chord is modifiers alone — the
-/// Right ⌘ + Right ⌥ style trigger `RegisterEventHotKey` can't express at all;
-/// a double-tap is one side-specific modifier struck twice quickly, which only
-/// an event tap can see.
-enum Shortcut: Equatable {
-    case modifierChord(Set<TriggerKey>)
-    case keyCombo(keyCode: UInt16, modifiers: NSEvent.ModifierFlags)
-    case doubleTap(TriggerKey)
+/// Only key combos, deliberately. Carbon's `RegisterEventHotKey` delivers them
+/// with no permission at all; a modifier-only gesture (a double-tap, a held
+/// chord) needs an event tap, and on macOS 27 an event tap needs both
+/// Accessibility and Input Monitoring — two grants to explain, lost on every
+/// update of an app macOS doesn't recognise, for a gesture that's no quicker.
+struct Shortcut: Equatable {
+    let keyCode: UInt16
+    /// Only ⌃ ⌥ ⇧ ⌘: whatever else an event carried (caps lock, fn, the
+    /// device-dependent bits) isn't part of the shortcut.
+    let modifiers: NSEvent.ModifierFlags
 
-    static let `default` = Shortcut.doubleTap(.rightOption)
-    /// Screenshots the window you're in and opens Flyby with it: ⌥⇧Space, a
-    /// plain key combo, so it needs no Accessibility permission.
-    static let screenshotDefault = Shortcut.keyCombo(keyCode: UInt16(kVK_Space), modifiers: [.option, .shift])
+    init(keyCode: UInt16, modifiers: NSEvent.ModifierFlags) {
+        self.keyCode = keyCode
+        self.modifiers = modifiers.intersection([.control, .option, .shift, .command])
+    }
+
+    /// ⌥/: rarely taken by anything else, one hand, no reach.
+    static let `default` = Shortcut(keyCode: UInt16(kVK_ANSI_Slash), modifiers: .option)
+    /// Screenshots the window you're in and opens Flyby with it.
+    static let screenshotDefault = Shortcut(keyCode: UInt16(kVK_Space), modifiers: [.option, .shift])
     /// What turning the screenshot shortcut on picks, in order, skipping any
-    /// that would collide with the one that opens Flyby.
+    /// that's the one that opens Flyby.
     static let screenshotDefaults: [Shortcut] = [
         screenshotDefault,
-        .keyCombo(keyCode: UInt16(kVK_Space), modifiers: [.control, .option]),
-        .keyCombo(keyCode: UInt16(kVK_ANSI_S), modifiers: [.control, .option]),
+        Shortcut(keyCode: UInt16(kVK_Space), modifiers: [.control, .option]),
+        Shortcut(keyCode: UInt16(kVK_ANSI_S), modifiers: [.control, .option]),
     ]
 
-    /// Whether pressing one would also set off the other: the same shortcut,
-    /// or one made out of the other. A chord inside a bigger chord goes off
-    /// on the way to it, and a chord's modifiers, held for a key combo, fire
-    /// the chord before the key lands. A double-tap needs its key alone, so
-    /// it collides only with itself.
-    func collides(with other: Shortcut) -> Bool {
-        switch (self, other) {
-        case (.keyCombo(let a, let am), .keyCombo(let b, let bm)):
-            return a == b && am.intersection(.deviceIndependentFlagsMask) == bm.intersection(.deviceIndependentFlagsMask)
-        case (.modifierChord(let a), .modifierChord(let b)):
-            return a.isSubset(of: b) || b.isSubset(of: a)
-        case (.modifierChord(let keys), .keyCombo(_, let modifiers)),
-             (.keyCombo(_, let modifiers), .modifierChord(let keys)):
-            return keys.allSatisfy { modifiers.contains($0.modifierFlag) }
-        case (.doubleTap(let a), .doubleTap(let b)):
-            return a == b
-        default:
-            return false
-        }
-    }
-
     var displayString: String {
-        switch self {
-        case .modifierChord(let keys):
-            // Stable order so the label doesn't reshuffle between launches.
-            return keys.sorted { $0.rawValue < $1.rawValue }
-                .map(\.symbol)
-                .joined(separator: " + ")
-
-        case .keyCombo(let keyCode, let modifiers):
-            return Shortcut.modifierSymbols(modifiers) + Shortcut.keyName(for: keyCode)
-
-        case .doubleTap(let key):
-            return "\(key.symbol) \(key.symbol)"
-        }
+        Shortcut.modifierSymbols(modifiers) + Shortcut.keyName(for: keyCode)
     }
 
-    /// Chords need both keys held; a key combo fires the instant the key goes
-    /// down; a double-tap is two quick strikes. Worth saying in the UI because
-    /// they feel different in the hand.
-    var explanation: String {
-        switch self {
-        case .modifierChord:        return "Hold these together to open Flyby."
-        case .keyCombo:             return "Press this to open Flyby."
-        case .doubleTap(let key):   return "Tap \(key.label) twice, quickly, to open Flyby."
-        }
-    }
+    var explanation: String { "Press this to open Flyby." }
 
     // MARK: - Persistence
 
     /// Stored as a plist-safe dictionary rather than raw bits, so a future
-    /// change to the enum doesn't silently reinterpret an old value.
+    /// change doesn't silently reinterpret an old value. Double-taps and
+    /// chords saved before 0.6 don't read back — the caller falls back to
+    /// the default.
     var storage: [String: Any] {
-        switch self {
-        case .modifierChord(let keys):
-            return ["kind": "chord", "keys": keys.map { NSNumber(value: $0.rawValue) }]
-        case .keyCombo(let keyCode, let modifiers):
-            return ["kind": "key", "keyCode": NSNumber(value: keyCode),
-                    "modifiers": NSNumber(value: modifiers.rawValue)]
-        case .doubleTap(let key):
-            return ["kind": "doubleTap", "key": NSNumber(value: key.rawValue)]
-        }
+        ["kind": "key", "keyCode": NSNumber(value: keyCode), "modifiers": NSNumber(value: modifiers.rawValue)]
     }
 
     init?(storage: [String: Any]) {
-        switch storage["kind"] as? String {
-        case "chord":
-            guard let raw = storage["keys"] as? [NSNumber] else { return nil }
-            let keys = Set(raw.compactMap { TriggerKey(rawValue: $0.uint64Value) })
-            guard keys.count >= 2 else { return nil }
-            self = .modifierChord(keys)
+        guard storage["kind"] as? String == "key",
+              let code = storage["keyCode"] as? NSNumber,
+              let mods = storage["modifiers"] as? NSNumber else { return nil }
+        self.init(keyCode: code.uint16Value, modifiers: NSEvent.ModifierFlags(rawValue: mods.uintValue))
+    }
 
-        case "key":
-            guard let code = storage["keyCode"] as? NSNumber,
-                  let mods = storage["modifiers"] as? NSNumber else { return nil }
-            self = .keyCombo(
-                keyCode: code.uint16Value,
-                modifiers: NSEvent.ModifierFlags(rawValue: mods.uintValue)
-            )
-
-        case "doubleTap":
-            guard let raw = storage["key"] as? NSNumber,
-                  let key = TriggerKey(rawValue: raw.uint64Value) else { return nil }
-            self = .doubleTap(key)
-
-        default:
-            return nil
-        }
+    /// Whether this was saved as a double-tap or a chord, which no longer
+    /// exist — so whoever had one can be told what replaced it.
+    static func isRetiredGesture(_ storage: [String: Any]) -> Bool {
+        ["chord", "doubleTap"].contains(storage["kind"] as? String ?? "")
     }
 
     // MARK: - Validation
@@ -299,32 +244,5 @@ enum Shortcut: Equatable {
             return nil
         }
         return Unmanaged<CFData>.fromOpaque(pointer).takeUnretainedValue()
-    }
-}
-
-extension TriggerKey {
-    var symbol: String {
-        switch self {
-        case .leftControl:  return "L⌃"
-        case .leftShift:    return "L⇧"
-        case .rightShift:   return "R⇧"
-        case .leftCommand:  return "L⌘"
-        case .rightCommand: return "R⌘"
-        case .leftOption:   return "L⌥"
-        case .rightOption:  return "R⌥"
-        case .rightControl: return "R⌃"
-        }
-    }
-}
-
-extension TriggerKey {
-    /// The side-agnostic modifier it is, as a key combo spells it.
-    var modifierFlag: NSEvent.ModifierFlags {
-        switch self {
-        case .leftControl, .rightControl: return .control
-        case .leftShift, .rightShift:     return .shift
-        case .leftCommand, .rightCommand: return .command
-        case .leftOption, .rightOption:   return .option
-        }
     }
 }

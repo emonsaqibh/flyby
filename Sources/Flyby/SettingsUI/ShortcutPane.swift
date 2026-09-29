@@ -42,11 +42,11 @@ struct ShortcutPane: View {
                     )
                     .frame(width: 210)
                 }
-                if let problem = health.shownMain {
-                    ShortcutProblemNote(problem: problem)
+                if let reason = health.main {
+                    ShortcutProblemNote(reason: reason)
                 }
             } footer: {
-                Text("Click, then press a key with modifiers for a combo like ⌥Space, hold two or more modifiers and let go for a chord, or tap one modifier twice for a double-tap. Key combos need no permissions; chords and double-taps need Accessibility and Input Monitoring.")
+                Text("Click, then press a key with modifiers, like ⌥/ or ⌃⌥Space. Shortcuts need no permissions.")
             }
 
             Section {
@@ -61,8 +61,8 @@ struct ShortcutPane: View {
                         )
                         .frame(width: 210)
                     }
-                    if let problem = health.shownScreenshot {
-                        ShortcutProblemNote(problem: problem)
+                    if let reason = health.screenshot {
+                        ShortcutProblemNote(reason: reason)
                     }
                 }
             } header: {

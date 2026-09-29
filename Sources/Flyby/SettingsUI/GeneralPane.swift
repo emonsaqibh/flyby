@@ -31,7 +31,7 @@ struct GeneralPane: View {
         .formStyle(.grouped)
     }
 
-    /// Login items and the Accessibility grant both key off the app's path,
+    /// Login items key off the app's path,
     /// so this is the fix for half the ways Flyby can appear broken — worth a
     /// section of its own, not a footnote.
     private var moveToApplications: some View {

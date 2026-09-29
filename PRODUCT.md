@@ -112,7 +112,7 @@ evaporates.
 | **AI answers can be stale or invented.** | Gemini mode runs with Google Search grounding on, so answers reflect the live web, with clickable sources. |
 | **Launchers want to own everything.** Files, apps, clipboard, snippets, window management. | Flyby is a search bar and nothing else — no files, apps, clipboard or snippets to set up. |
 | **AI tools want your data and a subscription.** | No Flyby account, no telemetry, no server of ours. Your Gemini key lives in your Keychain, the request goes straight from your Mac to Google. |
-| **Reaching for a shortcut interrupts the hands.** | Default trigger is a double-tap of Right ⌥ — no key press, one thumb — and a tap made while using ⌥ to type a character doesn't count. |
+| **Reaching for a shortcut interrupts the hands.** | Default shortcut is ⌥/ — one hand, no reach, rarely taken by anything else — and it needs no permissions. |
 
 ### The insight worth putting on the website
 > The cost of a search isn't the search. It's the round trip.
@@ -121,7 +121,7 @@ evaporates.
 
 ## 3. How it works — the loop
 
-1. **Summon.** Double-tap **Right ⌥** (default, fully rebindable). A dark
+1. **Summon.** Press **⌥/** (default, fully rebindable). A dark
    glass bar springs out of a small blob at the bottom centre of the screen the
    mouse is on, over whatever you're doing, with a small provider dropdown
    ("Google ⌄") at its trailing end.
@@ -172,46 +172,38 @@ hardware: this release hasn't run on a real Mac yet — see
 ### 4.1 Invocation
 - **Global shortcut**, works from any app, including over full-screen apps and on
   every Space (`canJoinAllSpaces`, `fullScreenAuxiliary`).
-- **Three shortcut shapes**, recorded by clicking a recorder in Settings (or
-  onboarding) and pressing what you want:
-  - **Key combo** — a key plus modifiers (⌥Space, ⌘⇧K). Implemented with
-    Carbon `RegisterEventHotKey`. **Requires no permissions at all.** If another
-    app already owns the combo, Flyby says so — an alert and a "Shortcut
-    Unavailable — Change It…" menu item — instead of failing silently.
-  - **Modifier chord** — two or more modifiers held and released with no key
-    (Right ⌘ + Right ⌥). Implemented with a `CGEventTap`, which macOS gates
-    behind Accessibility permission.
-  - **Double-tap** — one modifier struck twice quickly (double Right ⌥). Same
-    `CGEventTap` mechanism and Accessibility gate as chords. A strike counts
-    only if it's brief (≤0.4 s), no other modifier is involved, and no key went
-    down while it was held; the second must land within 0.35 s. That keeps
-    ⌥-symbol typing, option-drags and Right ⌥ used as AltGr (typing "@" on a
-    German layout) from triggering it.
-- **Modifier gestures are side-specific**: Left ⌘ and Right ⌘ are different
-  triggers.
-- **Default trigger:** double-tap Right ⌥.
+- **Key combos only** — a key plus modifiers (⌥/, ⌘⇧K), recorded by clicking a
+  recorder in Settings (or onboarding) and pressing what you want. Implemented
+  with Carbon `RegisterEventHotKey`. **Requires no permissions at all.** If
+  another app already owns the combo, Flyby says so — an alert and a "Shortcut
+  Unavailable — Change It…" menu item — instead of failing silently. Holding
+  modifiers and letting go without a key records nothing; the recorder says
+  "Hold the modifiers and press a key too — like ⌥/."
+- **Why only key combos:** modifier-only gestures (double-taps, held chords)
+  need an event tap, which on macOS 27 needs Accessibility *and* Input
+  Monitoring. Key combos need neither — no permissions to ask for, nothing to
+  lose on an update. Double-taps and chords were removed in 0.6.
+- **Default shortcut:** ⌥/ (Option + slash).
+- **Upgrading from a double-tap or chord:** it's replaced by ⌥/, with a one-time
+  notice (**OK** or **Change It…**); a gesture saved for the screenshot shortcut
+  quietly goes back to ⌥⇧Space.
 - **The recorder refuses combos that would hijack the system or every app**,
   with a one-line reason: bare keys, ⇧ plus a character, ⌘ with Q, W, C, V, X,
   Z, A, S, N, T, O, P, F, H, M or "," (matched by the character typed, so it
   holds on AZERTY), ⌘Tab, ⌘Space, ⌘`, ⌘⇧3/4/5, ⌃⌘Q and ⌃Space. Esc cancels
   recording instead of becoming the shortcut.
-- Holding a chord down does not repeat-fire; it re-arms only on release.
 - **First launch runs a one-time onboarding flow**: welcome (with a live demo of the bar) → provider and search engine (with the Gemini
   key field if Gemini is picked) → **Connect your Google account** (only if
   Google AI Mode is picked; skippable) → shortcut recording (pre-filled with the
-  default) → Accessibility grant (only if the recorded shape needs it and it
-  isn't granted; auto-advances the moment permission lands) → a practice step
-  that waits for the real trigger to fire → done, with an open-at-login toggle.
+  default) → a practice step that waits for the real shortcut to fire → ask
+  about your screen (the screenshot shortcut) → done, with an open-at-login
+  toggle. There is no permission step.
   Installs that already recorded a shortcut before onboarding existed skip it;
   Settings › Advanced can run it again.
 - The shortcut toggles: pressing it while Flyby is open closes it.
-- **The menu-bar icon becomes a warning triangle** if the trigger can't be
-  installed, so it never fails silently — with "Grant Accessibility
-  Permission…" when a modifier-only shortcut lacks the grant, or "Shortcut
-  Unavailable — Change It…" when a key combo is taken. For the permission case
-  the app polls once a second and starts working the moment it's granted — no
-  relaunch. Revoking Accessibility while the app runs is noticed too (the tap is
-  health-checked every 3 s) and brings the warning back.
+- **The menu-bar icon becomes a warning triangle** if the shortcut can't be
+  installed, so it never fails silently — with "Shortcut Unavailable — Change
+  It…" when the combo is taken by another app.
 - Opening the app again from Finder or `open -a`, or launching a second copy of
   the same build, summons Flyby. Only one copy of each build runs.
 - The menu-bar menu has **Open Flyby**, **Settings…**, **Check for Updates…**
@@ -488,11 +480,10 @@ name) for Browser.
   write there), clears the quarantine flag on the copy, moves the original to
   the Trash rather than deleting it, and never replaces an app that isn't Flyby.
   Settings › General keeps a **Move to Applications** row until it's somewhere
-  real, because login items and the Accessibility grant both follow the app's
-  path.
+  real, because login items and permissions both follow the app's path.
 - **Two builds side by side.** "Flyby Dev" and "Flyby" have different bundle IDs,
   so each has its own settings, Keychain entry, Google session, login item and
-  Accessibility grant. The dev build wears an amber icon and a **DEV** badge.
+  permission grants. The dev build wears an amber icon and a **DEV** badge.
 - **Reset All Data** (Settings › Advanced) returns the app to a fresh-install
   state: preferences, the Gemini key, the Google connection and the login item
   all go, and onboarding starts over.
@@ -652,10 +643,10 @@ the toolbar. Explanations sit under their sections as footers.
 ### General
 - **About** — the app icon, name (with a DEV badge in the dev build), version
   and commit.
-- **Shortcut** (its own pane) — the current shortcut drawn as key caps, a
-  click-and-press recorder, and a live explanation of what the recorded trigger does ("Hold these together…", "Press this…", "Tap Right ⌥
-  twice…") and a note that key combos need no permissions while chords and
-  double-taps need Accessibility.
+- **Shortcut** (its own pane) — the current shortcut drawn as key caps with
+  "Press this to open Flyby." under it, a click-and-press recorder ("Click,
+  then press a key with modifiers, like ⌥/ or ⌃⌥Space."), and a note that
+  shortcuts need no permissions.
 - **System** — **Move to Applications** (release build, only when it isn't in
   an Applications folder), and **Open at login** with honest status reporting.
 - **Updates** (release build) — **Check for updates automatically**, **Include
@@ -728,7 +719,9 @@ source.
   is open and cleared on close; Flyby writes no record of what you searched, and
   its logs never contain the query text (AI Mode logs only that a search started
   and how many characters it had). (See the caveat below about Google's side.)
-- **No reading of your screen or clipboard.** Flyby writes to the clipboard only
+- **No reading of your screen, except a screenshot you ask for** — the one
+  window you were in, when you press the screenshot shortcut — **and none of your
+  clipboard.** Flyby writes to the clipboard only
   when you copy. The only other app data it reads is **Google cookies from
   Safari's or Firefox's cookie store — only after you click Connect**, then
   silently again when the copy is more than 30 minutes old (checked at launch
@@ -738,15 +731,13 @@ source.
   Safari's version number, to match Safari's user agent.)
 
 ### Permissions
-- **Accessibility** is required **only** for modifier-only shortcuts (chords
-  and double-taps, including the default), because `RegisterEventHotKey` cannot
-  express "modifiers with no key" and cannot distinguish Right ⌘ from Left ⌘.
-  Record a key combo like ⌥Space instead and the shortcut needs **no
-  permissions whatsoever**.
-- The event tap, when used, is **listen-only** and subscribes to
-  `flagsChanged` events only — modifier state changes. It does not observe key
-  presses; to reject AltGr typing, a double-tap asks the window server only how
-  long ago *any* key went down, never which. No Input Monitoring permission.
+- **No keyboard permissions at all.** Shortcuts are key combos only, registered
+  with Carbon `RegisterEventHotKey`, which needs **no permissions whatsoever** —
+  Flyby installs no event tap and never asks for Accessibility or Input
+  Monitoring. (Before 0.6, double-tap and chord shortcuts needed an
+  Accessibility-gated event tap; they're gone.)
+- **Screen Recording** is needed only for the screenshot shortcut; macOS asks
+  the first time it's used.
 - **Full Disk Access** is needed **only** to connect Safari, whose cookies sit in
   a protected folder. Firefox usually needs none, and signing in within Flyby
   needs none. AI Mode also works unconnected — Google just challenges anonymous
@@ -811,7 +802,7 @@ Sources/Flyby/            the app
   SlashCommands           "/" commands and their list
   AnswerCard              the card's content: corner buttons, web layer
   SettingsView, OnboardingView
-  HotKeyMonitor, Shortcut, ShortcutRecorder   Carbon hot keys + event tap
+  HotKeyMonitor, Shortcut, ShortcutRecorder   Carbon hot keys
   Installer, SingleInstance                   where the app lives; one copy
   Updates/                GitHub release checks
   Support/BuildFlavor     dev vs release
@@ -874,14 +865,14 @@ Hunt, where "what it doesn't do" comments arrive within the hour.
   signed out too until you reconnect.
 - **Connected AI Mode searches are made as you**, so they may appear in your
   Google account activity, like any search in your browser.
-- **Accessibility permission** is needed for the *default* double-tap shortcut.
-  The mitigation (record a key combo instead — zero permissions) must be one
-  line away from wherever the permission is mentioned.
-- **Ad-hoc signing invalidates that permission whenever the binary changes** —
-  every `./build.sh`, and each new ad-hoc-signed release an update installs.
-  Users of modifier-only shortcuts should expect to remove and re-add Flyby under
-  Accessibility after updating, until builds are Developer ID signed — see
-  [Open decisions](#17-open-decisions-before-launch).
+- **Key combos only.** Since 0.6 there are no double-tap or held-modifier
+  shortcuts — the price of needing no keyboard permissions. A combo another app
+  already owns has to be changed; Flyby says so rather than failing silently.
+- **Permissions survive updates.** Since 0.5.2 releases are signed with a
+  stable self-signed certificate, so macOS sees each update as the same app and
+  keeps its permissions — now just Screen Recording. (Ad-hoc-signed releases
+  before that had to be re-granted after every update.) Builds still aren't
+  Developer ID signed — see [Open decisions](#17-open-decisions-before-launch).
 - **Gemini requires a free API key** the user pastes in. That's a real setup step
   and shouldn't be soft-pedalled — but it's also *why* there's no subscription
   and no account. The free tier is rate-limited, and Flyby says so when a limit
@@ -953,29 +944,29 @@ Each of these is a candidate for a website section, a screenshot, or a Product
 Hunt gallery card.
 
 ### 1. The mid-sentence fact check
-*Writing a paragraph, need a date.* Chord, "when was the swift language
+*Writing a paragraph, need a date.* ⌥/, "when was the swift language
 released", Return, read, Esc. The document never lost focus.
 
 ### 2. The API signature you almost remember
-*In your editor.* Chord, "swift urlsession bytes for request", Return. Gemini
+*In your editor.* ⌥/, "swift urlsession bytes for request", Return. Gemini
 answers with the signature and links the docs. Copy the line, Esc, keep typing.
 
 ### 3. The error message
-*Terminal spits a cryptic error.* Select it, chord, paste, Return. Gemini
+*Terminal spits a cryptic error.* Select it, ⌥/, paste, Return. Gemini
 answers grounded in the live web — so it knows about the version you're
 actually on, not the one it was trained on.
 
 ### 4. The "is this still true?" check
-*Reading a two-year-old blog post.* Chord, ask, Return. Grounding means the
+*Reading a two-year-old blog post.* ⌥/, ask, Return. Grounding means the
 answer reflects today's web, and the source cards let you verify in one click.
 
 ### 5. The deliberate browser hop
-*A query that genuinely deserves the full web.* Chord, type, **⌘Return** — your
+*A query that genuinely deserves the full web.* ⌥/, type, **⌘Return** — your
 browser opens with your engine of choice. The pill got out of the way instead of
 insisting on answering.
 
 ### 6. The comparison shop
-*Perplexity as your engine.* Chord, "best portable ssd 2026", ⌘Return, straight
+*Perplexity as your engine.* ⌥/, "best portable ssd 2026", ⌘Return, straight
 into Perplexity. Flyby is the on-ramp, not the destination.
 
 ### 7. Searching over a full-screen app
@@ -983,7 +974,7 @@ into Perplexity. Flyby is the on-ramp, not the destination.
 on every Space. Nothing gets minimised, nothing gets rearranged.
 
 ### 8. The definition, without the round trip
-*Reading a paper.* Chord, term, Return, read the streamed definition, Esc.
+*Reading a paper.* ⌥/, term, Return, read the streamed definition, Esc.
 
 ---
 
@@ -1045,7 +1036,7 @@ Say this out loud somewhere; it makes everything else believable.
 ### Feature copy blocks (reusable)
 
 **Anywhere, instantly**
-> Double-tap Right ⌥ — or record any shortcut you want — and a search pill
+> Press ⌥/ — or record any shortcut you want — and a search pill
 > appears over whatever you're doing. Full-screen apps, any Space, any monitor.
 > Esc and you're back exactly where you were.
 
@@ -1100,7 +1091,7 @@ Say this out loud somewhere; it makes everything else believable.
 **1. Hero**
 - H1 + sub from [Messaging kit](#13-messaging-kit).
 - **Primary asset: a looping GIF/video, ~6 seconds**, showing the real loop:
-  someone typing in an editor → chord → pill fades in over the code → question
+  someone typing in an editor → ⌥/ → pill fades in over the code → question
   typed → answer streams in with sources → Esc → cursor still blinking in the
   same place. *This one asset does more selling than the rest of the page
   combined.*
@@ -1133,8 +1124,9 @@ against a hundred AI-wrapper launches; show the numbers.*
 [§7](#7-privacy-data-and-permissions), including the honest Google caveat. A
 plain, unstyled list reads as more truthful here than a designed one.
 
-**8. Your shortcut, your way** — the recorder, chords vs key combos, and the
-permission story stated plainly with the mitigation on the same line.
+**8. Your shortcut, your way** — the recorder, ⌥/ as the default, and the
+permission story stated plainly: key combos only, so no keyboard permissions
+and nothing to re-grant after an update.
 
 **9. Comparison** — the table from [§12](#12-competitive-positioning), including
 the row where competitors win.
@@ -1157,10 +1149,10 @@ signed in within Flyby, which makes Google far less likely to ask if you're
 human.
 
 **Does it need permissions?**
-Only if you use a modifier-only shortcut like the default double-tap of
-Right ⌥ — macOS only delivers those through an Accessibility-gated event tap.
-Record a shortcut with a regular key (⌥Space, ⌘⇧K) and the shortcut needs no
-permissions at all. Separately, connecting AI Mode to Safari's Google sign-in
+Not for the shortcut. Shortcuts are key combos (⌥/, ⌘⇧K), which macOS delivers
+with no permission at all — Flyby never asks for Accessibility or Input
+Monitoring. The screenshot shortcut needs Screen Recording, which macOS asks for
+the first time. Separately, connecting AI Mode to Safari's Google sign-in
 needs Full Disk Access, because Safari keeps its cookies in a protected folder;
 Firefox usually needs nothing.
 
@@ -1215,7 +1207,7 @@ settings.
 | Screenshot: the dark bar over a light app | Proves it holds up on anything (it's always dark) | P1 |
 | Screenshot: provider dropdown menu open | Shows the four modes exist | P1 |
 | Screenshot: Settings panes | Shows depth | P1 |
-| Clip: shortcut recorder in use | Shows the chord idea, which is unusual | P2 |
+| Clip: shortcut recorder in use | Shows any combo can be the shortcut, with no permission prompt | P2 |
 | Clip: Liquid Glass refracting over a colourful window | Craft signal | P2 |
 | App icon | **Only a generated placeholder exists** — real artwork wanted for the bundle, the site and PH | P0 |
 | OG/social card | 1200×630 | P1 |
@@ -1264,7 +1256,7 @@ Menu Bar Apps
 >
 > The search took four seconds. The round trip cost twenty minutes.
 >
-> So Flyby never opens a browser unless you ask it to. You double-tap Right ⌥
+> So Flyby never opens a browser unless you ask it to. You press ⌥/
 > (or any shortcut you record), a small pill appears over whatever you're
 > doing, you type, and the answer comes to you:
 >
@@ -1281,9 +1273,9 @@ Menu Bar Apps
 > Things I care about that you might too:
 > • **No sign-up, no server, no telemetry.** There's no backend at all. Your
 >   Gemini key lives in your Keychain and talks straight to Google.
-> • **No permissions needed** for the shortcut if you record a key combo. The
->   default double-tap needs Accessibility, because macOS won't deliver
->   modifiers-with-no-key any other way.
+> • **No keyboard permissions at all.** Shortcuts are plain key combos, so
+>   Flyby never asks for Accessibility or Input Monitoring — nothing to grant,
+>   nothing to lose on an update.
 > • **Native, zero dependencies.** Swift + SwiftUI + AppKit. Liquid Glass
 >   throughout, and Apple Intelligence on-device.
 >
@@ -1303,7 +1295,7 @@ Menu Bar Apps
 | "Why not OpenAI/Claude?" | Gemini's free tier + built-in Search grounding is what makes a zero-cost live-web answer possible with no backend. More providers are on the list. |
 | "Another ChatGPT wrapper" | There's no wrapper — no server, no proxy, no sign-up, your key goes straight to Google. And only Gemini mode calls an LLM API at all; the other two are Google's own AI Mode page and your browser. |
 | "Is scraping Google AI Mode allowed?" | Flyby loads exactly one Google page per search you type, in your own Google session, and reads the answer out of that page on your Mac to draw it natively — nothing is stored or re-served. It's also the mode we tell people is fragile; the Gemini API is the durable one. *(Get the legal read in §17 before answering this for a paid product.)* |
-| "Accessibility permission = keylogger?" | The tap is listen-only and subscribes exclusively to modifier-flag changes, not key presses. Use a key-combo shortcut and there's no tap at all. |
+| "A global shortcut = keylogger?" | No keyboard permissions at all. The shortcut is a plain key combo registered with macOS (`RegisterEventHotKey`), which tells Flyby only when that combo is pressed — Flyby never asks for Accessibility or Input Monitoring. |
 | "Full Disk Access to read my cookies?!" | Only to connect Safari, whose cookie file sits in a protected folder. Flyby copies only Google's cookies, into its own private store, and only after you click Connect. Firefox usually needs nothing, you can sign in within Flyby instead, and AI Mode works without any of it. |
 | "Windows/Linux?" | Not planned. This leans hard on AppKit. |
 | "Where's the download?" | Today it's a one-line curl install from the GitHub README (releases aren't notarized yet, so a browser download won't open). → **a proper download link needs the Developer ID, see §17** |
@@ -1342,8 +1334,9 @@ Do **not** write any of these. They are false today.
 - ❌ "Search your files / apps / clipboard" — it does none of these
 - ❌ "Search history" / "recents" — deliberately absent
 - ❌ "Supports OpenAI / Claude / local models" — Gemini only
-- ❌ "No permissions required" **without** the "if you use a key-combo shortcut"
-  qualifier — and connecting Safari needs Full Disk Access
+- ❌ "No permissions required" **without** the "for the shortcut" qualifier —
+  the screenshot shortcut needs Screen Recording, and connecting Safari needs
+  Full Disk Access
 - ❌ "Never touches your browser data" — connecting reads Google cookies from
   Safari or Firefox
 - ❌ "Works with Chrome / Arc / Brave / Edge" — Chromium import is switched off
@@ -1360,7 +1353,8 @@ Do **not** write any of these. They are false today.
 - ❌ Any claim that AI Mode is stable or officially supported by Google
 
 **Claims that need their qualifier attached every single time:**
-- "No permissions needed" → *…if you record a key-combo shortcut.*
+- "No permissions needed" → *…for the shortcut; screenshots need Screen
+  Recording, connecting Safari needs Full Disk Access.*
 - "Free" → *…Gemini mode needs your own free API key.*
 - "No account" → *…no Flyby account; AI Mode can optionally use your Google
   account.*
@@ -1388,7 +1382,7 @@ and the PH listing do.
    update checks. A Developer ID ($99/yr) removes the curl workaround, makes a
    notarized DMG and a normal download link possible, and is the precondition for
    re-enabling Chrome-family import. Mac App Store would require sandboxing, which
-   likely conflicts with the event tap, the login item and reading another
+   likely conflicts with the login item and reading another
    browser's cookie store. **Recommendation: direct download, Developer ID signed
    and notarized.**
 5. **Domain and where the site is hosted.**

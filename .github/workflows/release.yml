@@ -2,7 +2,7 @@ name: Release
 
 # Releases are made on a Mac, with ./release.sh and ./publish.sh: from 0.5.2
 # they're signed with the "Flyby Release Signing" certificate, which keeps
-# people's Screen Recording, Accessibility and Input Monitoring grants from one
+# people's Screen Recording (and Full Disk Access) grants from one
 # update to the next — and that certificate lives only on the Mac releases are
 # made on. A build here would be ad-hoc: a new app to macOS, and everyone's
 # grants gone again. So this workflow:

@@ -3,35 +3,6 @@ import ServiceManagement
 import Security
 import os
 
-/// A modifier key that can take part in the "hold two modifiers" trigger.
-/// Raw values are the device-dependent bits macOS sets on `CGEventFlags`,
-/// which is the only way to tell left from right.
-enum TriggerKey: UInt64, CaseIterable, Identifiable {
-    case leftControl  = 0x0000_0001
-    case leftShift    = 0x0000_0002
-    case rightShift   = 0x0000_0004
-    case leftCommand  = 0x0000_0008
-    case rightCommand = 0x0000_0010
-    case leftOption   = 0x0000_0020
-    case rightOption  = 0x0000_0040
-    case rightControl = 0x0000_2000
-
-    var id: UInt64 { rawValue }
-
-    var label: String {
-        switch self {
-        case .leftControl:  return "Left ⌃"
-        case .leftShift:    return "Left ⇧"
-        case .rightShift:   return "Right ⇧"
-        case .leftCommand:  return "Left ⌘"
-        case .rightCommand: return "Right ⌘"
-        case .leftOption:   return "Left ⌥"
-        case .rightOption:  return "Right ⌥"
-        case .rightControl: return "Right ⌃"
-        }
-    }
-}
-
 enum ProviderKind: String, CaseIterable, Identifiable {
     case browser  = "browser"
     /// Stored as "webview" — the name from before AI Mode got a native view.
@@ -133,6 +104,9 @@ final class AppSettings: ObservableObject {
     @Published var shortcut: Shortcut {
         didSet { defaults.set(shortcut.storage, forKey: "shortcut") }
     }
+    /// This launch found a double-tap or chord saved as the shortcut and put
+    /// the default in its place — worth telling the user, once.
+    private(set) var replacedRetiredShortcut = false
     /// Screenshots the window you're in and opens Flyby with it attached.
     /// `nil` when turned off — stored as such, so it stays off rather than
     /// falling back to the default.
@@ -225,11 +199,17 @@ final class AppSettings: ObservableObject {
         } else {
             hasCompletedOnboarding = defaults.dictionary(forKey: "shortcut") != nil
         }
-        let main = AppSettings.loadShortcut(from: defaults)
+        // A double-tap or chord saved before 0.6 is gone: the default takes
+        // its place, saved, and said once (`replacedRetiredShortcut`).
+        let stored = defaults.dictionary(forKey: "shortcut")
+        let retired = stored.map(Shortcut.isRetiredGesture) ?? false
+        let main = stored.flatMap(Shortcut.init(storage:)) ?? .default
+        if retired { defaults.set(main.storage, forKey: "shortcut") }
+        replacedRetiredShortcut = retired
         shortcut = main
         var screenshot = AppSettings.loadScreenshotShortcut(from: defaults)
         // Saved before the two were kept apart: the one that opens Flyby wins.
-        if let colliding = screenshot, colliding.collides(with: main) {
+        if let colliding = screenshot, colliding == main {
             screenshot = nil
             defaults.set(["kind": "off"], forKey: "screenshotShortcut")
         }
@@ -302,25 +282,11 @@ final class AppSettings: ObservableObject {
         }
     }
 
-    /// Reads the recorded shortcut, falling back to the pre-recorder pair of
-    /// modifier settings so an existing install keeps its trigger.
-    private static func loadShortcut(from defaults: UserDefaults) -> Shortcut {
-        if let stored = defaults.dictionary(forKey: "shortcut"),
-           let shortcut = Shortcut(storage: stored) {
-            return shortcut
-        }
-        if let a = (defaults.object(forKey: "triggerA") as? NSNumber).flatMap({ TriggerKey(rawValue: $0.uint64Value) }),
-           let b = (defaults.object(forKey: "triggerB") as? NSNumber).flatMap({ TriggerKey(rawValue: $0.uint64Value) }) {
-            return .modifierChord([a, b])
-        }
-        return .default
-    }
-
     // MARK: - The two shortcuts
 
-    /// One press can't both open Flyby and take a screenshot, so neither
-    /// shortcut may collide with the other (`Shortcut.collides`): each is
-    /// refused, with the reason, while the other has those keys. The
+    /// One press can't both open Flyby and take a screenshot, so the two
+    /// shortcuts can't be the same: each is refused, with the reason, while
+    /// the other has those keys. The
     /// recorders ask `conflict(forShortcut:)` / `conflict(forScreenshot:)`
     /// first and say why; these refuse anything that gets past them.
     @discardableResult
@@ -339,18 +305,18 @@ final class AppSettings: ObservableObject {
 
     /// Why `candidate` can't open Flyby, if it can't.
     func conflict(forShortcut candidate: Shortcut) -> String? {
-        guard let screenshot = screenshotShortcut, candidate.collides(with: screenshot) else { return nil }
+        guard let screenshot = screenshotShortcut, candidate == screenshot else { return nil }
         return "That would also take a screenshot — \(screenshot.displayString) is your screenshot shortcut. Pick another, or change that one first."
     }
 
     /// Why `candidate` can't take screenshots, if it can't.
     func conflict(forScreenshot candidate: Shortcut) -> String? {
-        guard candidate.collides(with: shortcut) else { return nil }
+        guard candidate == shortcut else { return nil }
         return "That would also open Flyby — \(shortcut.displayString) is what opens it. Pick another."
     }
 
-    /// Turning the screenshot shortcut on: the first default that doesn't
-    /// collide with what opens Flyby.
+    /// Turning the screenshot shortcut on: the first default that isn't what
+    /// opens Flyby.
     var screenshotShortcutToEnable: Shortcut? {
         Shortcut.screenshotDefaults.first { conflict(forScreenshot: $0) == nil }
     }
