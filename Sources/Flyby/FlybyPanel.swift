@@ -124,6 +124,16 @@ final class FlybyPanel: NSPanel {
             ?? NSScreen.main
     }
 
+    /// Where the middle of the one-line bar is, or will be, on `screen`, in
+    /// screen coordinates: centred, on the pills above the bottom of the
+    /// usable screen — as `position(on:)` puts it. The capture wave starts
+    /// there.
+    static func barCenter(on screen: NSScreen) -> CGPoint {
+        let visible = screen.visibleFrame
+        let barBottom = visible.minY + StageMetrics.bottomInset + StageMetrics.pillsHeight
+        return CGPoint(x: visible.midX, y: barBottom + InputStyle.bar.height(lines: 1) / 2)
+    }
+
     /// Covers the column the stage can occupy — from the pills under the bar
     /// to as tall as the card gets on this screen — plus room all round for
     /// the glass's shadow. The lower margin dips behind the Dock, which draws

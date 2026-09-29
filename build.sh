@@ -24,7 +24,10 @@
 #
 # Signing is ad-hoc unless SIGN_IDENTITY names a Developer ID, which also turns on
 # the hardened runtime and a secure timestamp (both required for notarization,
-# which release.sh does).
+# which release.sh does). A dev build is signed with this Mac's local
+# certificate when it has one (scripts/dev-signing.sh): an ad-hoc signature
+# changes with every build, and macOS drops Flyby Dev's Screen Recording,
+# Accessibility and Full Disk Access grants each time it does.
 set -euo pipefail
 cd "$(dirname "$0")"
 
@@ -51,7 +54,9 @@ fi
 
 FLAVOR="${FLAVOR:-dev}"
 BASE_ID="com.fringecore.flyby"
+REQUESTED_IDENTITY="${SIGN_IDENTITY:-}"
 SIGN_IDENTITY="${SIGN_IDENTITY:--}"
+DEV_IDENTITY="Flyby Dev Local Signing"
 PLIST_VERSION=$(/usr/libexec/PlistBuddy -c 'Print CFBundleShortVersionString' Resources/Info.plist)
 
 case "$FLAVOR" in
@@ -76,6 +81,9 @@ case "$FLAVOR" in
       case "$BRANCH" in ""|dev|main) ;; *) VERSION="$VERSION · ${BRANCH##*/}" ;; esac
     fi
     BUILD_NUMBER="$(date +%Y%m%d%H%M)"
+    if [[ -z "$REQUESTED_IDENTITY" ]] && security find-identity -v -p codesigning 2>/dev/null | grep -qF "\"$DEV_IDENTITY\""; then
+      SIGN_IDENTITY="$DEV_IDENTITY"
+    fi
     ;;
   release)
     CONF="${CONF:-release}"
@@ -152,7 +160,7 @@ cp "$ICON" "$APP/Contents/Resources/AppIcon.icns"
 
 echo "› Signing ($SIGN_IDENTITY)…"
 sign_args=(--force --sign "$SIGN_IDENTITY" --identifier "$BUNDLE_ID")
-if [[ "$SIGN_IDENTITY" != "-" ]]; then
+if [[ "$SIGN_IDENTITY" != "-" && "$SIGN_IDENTITY" != "$DEV_IDENTITY" ]]; then
   sign_args+=(--options runtime --timestamp)
 fi
 codesign "${sign_args[@]}" "$APP"

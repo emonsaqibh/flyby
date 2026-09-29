@@ -19,6 +19,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// ⌥⇧Space by default: a screenshot of the window you're in, into Flyby.
     private let screenshotHotKeys = HotKeyMonitor(number: 2) { AppSettings.shared.screenshotShortcut }
     private var screenshotPermissionPoll: Task<Void, Never>?
+    private var hasAskedForScreenshotAccessibility = false
     private var isCapturing = false
     private var waveGeneration = 0
     // Lazy, so a launch that hands straight over to the installed copy never
@@ -434,6 +435,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // MARK: - Hotkey
 
     private func startHotKeys() {
+        // A scripted run owns the chat; a shortcut would reset it mid-question.
+        if AIModeDebug.isScripted {
+            Self.log.notice("scripted debug run: not listening for shortcuts")
+            return
+        }
         hotKeys.onTrigger = { [weak self] in
             // The onboarding practice step listens for this as proof the
             // pipeline works end to end.
@@ -467,6 +473,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             .store(in: &cancellables)
 
         screenshotHotKeys.onTrigger = { [weak self] in self?.captureScreen() }
+        // As for the main shortcut: a gesture whose tap stops for want of
+        // Accessibility comes back, through the poll, once it's granted.
+        screenshotHotKeys.onAccessibilityLost = { [weak self] in
+            self?.installScreenshotShortcut(reportProblems: false)
+        }
         installScreenshotShortcut(reportProblems: false)
         AppSettings.shared.$screenshotShortcut
             .dropFirst()
@@ -477,21 +488,34 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     /// The screenshot shortcut is quieter about trouble than the main one:
-    /// nothing in the menu bar, no Accessibility alert (the main shortcut
-    /// owns that conversation) — just a poll that brings it up once the grant
-    /// arrives, and word when a combo the user just recorded is taken.
+    /// nothing in the menu bar and no alert of its own — macOS's own
+    /// Accessibility prompt, once a launch, when it's a modifier-only gesture
+    /// that needs it (not during onboarding, which owns that conversation);
+    /// a poll that brings it up once the grant arrives; and word when a combo
+    /// the user just recorded is taken.
     private func installScreenshotShortcut(reportProblems: Bool) {
         screenshotPermissionPoll?.cancel()
         screenshotPermissionPoll = nil
-        switch screenshotHotKeys.reload() {
+        var status = screenshotHotKeys.reload()
+        // A listen-only tap installs without the grant, then goes quiet;
+        // better to wait for the grant than to install one that can't work.
+        if status == .active, screenshotHotKeys.requiresAccessibility, !HotKeyMonitor.isTrusted {
+            screenshotHotKeys.stop()
+            status = .needsAccessibility
+        }
+        switch status {
         case .active, .paused, .off:
             break
         case .needsAccessibility:
+            if !hasAskedForScreenshotAccessibility, AppSettings.shared.hasCompletedOnboarding {
+                hasAskedForScreenshotAccessibility = true
+                HotKeyMonitor.ensureAccessibilityPermission()
+            }
             screenshotPermissionPoll = Task { @MainActor [weak self] in
                 while !Task.isCancelled {
                     try? await Task.sleep(nanoseconds: 1_000_000_000)
                     guard !Task.isCancelled, let self else { return }
-                    if self.screenshotHotKeys.isPaused { continue }
+                    if self.screenshotHotKeys.isPaused || !HotKeyMonitor.isTrusted { continue }
                     if self.screenshotHotKeys.reload() != .needsAccessibility { return }
                 }
             }
@@ -661,6 +685,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let frontmost = NSWorkspace.shared.frontmostApplication
         let target = frontmost?.processIdentifier == ProcessInfo.processInfo.processIdentifier ? previousApp : frontmost
 
+        // The wave plays where the bar is, or where it's about to open.
+        let barScreen = stage.isPresented && !stage.isClosing ? (panel.screen ?? FlybyPanel.activeScreen) : FlybyPanel.activeScreen
+
         guard ScreenCapture.hasPermission else {
             reportCaptureProblem(.notAllowed)
             return
@@ -670,7 +697,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             guard let self else { return }
             defer { self.isCapturing = false }
             do {
-                let capture = try await ScreenCapture.capture(windowOf: target)
+                let capture = try await ScreenCapture.capture(windowOf: target, waveScreen: barScreen)
                 AppSettings.shared.hasCapturedScreen = true
                 self.playWave(for: capture)
                 self.openFlybyIfClosed()
@@ -705,14 +732,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if !stage.isPresented || stage.isClosing { showFlyby() }
     }
 
-    /// Over everything on the window's display, the menu bar and Dock
-    /// included — except Flyby's bar, lifted above it until it's done, so
-    /// the bar can open while the wave crosses the screen behind it.
+    /// From the middle of the bar, over everything on its display, the menu
+    /// bar and Dock included — except the bar itself, lifted above it until
+    /// it's done, so it can open while the wave crosses the screen behind it.
     private func playWave(for capture: ScreenCapture.Capture) {
         waveGeneration += 1
         let generation = waveGeneration
         let resting = NSWindow.Level.floating
-        CaptureWave.play(over: capture.screen, showing: capture.display, focus: capture.windowFrame, level: .screenSaver) { [weak self] in
+        CaptureWave.play(
+            over: capture.screen, showing: capture.display,
+            from: FlybyPanel.barCenter(on: capture.screen), focus: capture.windowFrame,
+            level: .screenSaver
+        ) { [weak self] in
             guard let self, generation == self.waveGeneration else { return }
             self.panel.level = resting
         }

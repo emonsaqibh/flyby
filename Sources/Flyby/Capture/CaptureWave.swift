@@ -6,8 +6,8 @@ import os
 private let waveLog = Logger(subsystem: "com.fringecore.flyby", category: "capture")
 
 /// The wave that crosses the screen as a screenshot is taken — AirDrop's,
-/// more or less: a ring of light spreads out from the captured window, and
-/// the screen refracts as it passes.
+/// more or less: a ring of light spreads out from Flyby's bar, where the
+/// screenshot goes, and the screen refracts as it passes.
 ///
 /// A borderless window over the whole display shows the screenshot just
 /// taken, bent by a fragment shader, then fades back into the live screen.
@@ -65,14 +65,15 @@ final class CaptureWave: NSObject, MTKViewDelegate {
     }
 
     /// Plays the wave over `screen`, showing `image` — that display as it
-    /// was just captured, without Flyby on it. `focus` is the captured window
-    /// in screen coordinates; the ring starts from its middle. The overlay
-    /// is at `level`, over the menu bar and the Dock too; anything meant to
-    /// stay in front has to be above it. `completion` runs once the live
-    /// screen is back.
+    /// was just captured, without Flyby on it. The ring starts at `origin`,
+    /// in screen coordinates; `focus` is the captured window, which flashes
+    /// instead under Reduce Motion. The overlay is at `level`, over the menu
+    /// bar and the Dock too; anything meant to stay in front has to be above
+    /// it. `completion` runs once the live screen is back.
     static func play(
         over screen: NSScreen,
         showing image: CGImage,
+        from origin: CGPoint,
         focus: CGRect,
         level: NSWindow.Level = .screenSaver,
         completion: (() -> Void)? = nil
@@ -95,7 +96,7 @@ final class CaptureWave: NSObject, MTKViewDelegate {
             return
         }
         let wave = CaptureWave(
-            screen: screen, image: image, texture: texture, focus: focus,
+            screen: screen, image: image, texture: texture, origin: origin, focus: focus,
             level: level, device: device, queue: queue, pipeline: pipeline
         )
         wave.completion = completion
@@ -104,7 +105,7 @@ final class CaptureWave: NSObject, MTKViewDelegate {
     }
 
     private init(
-        screen: NSScreen, image: CGImage, texture: MTLTexture, focus: CGRect,
+        screen: NSScreen, image: CGImage, texture: MTLTexture, origin start: CGPoint, focus: CGRect,
         level: NSWindow.Level, device: MTLDevice, queue: MTLCommandQueue,
         pipeline: MTLRenderPipelineState
     ) {
@@ -120,9 +121,7 @@ final class CaptureWave: NSObject, MTKViewDelegate {
             width: focus.width,
             height: focus.height
         ).intersection(CGRect(origin: .zero, size: frame.size))
-        let origin = local.isNull
-            ? CGPoint(x: frame.width / 2, y: frame.height / 2)
-            : CGPoint(x: local.midX, y: local.midY)
+        let origin = CGPoint(x: start.x - frame.minX, y: frame.maxY - start.y)
         // Far enough that the band has fully left the farthest corner.
         let corners = [CGPoint.zero, CGPoint(x: frame.width, y: 0),
                        CGPoint(x: 0, y: frame.height), CGPoint(x: frame.width, y: frame.height)]
@@ -311,18 +310,18 @@ final class CaptureWave: NSObject, MTKViewDelegate {
 
         float front = u.reach * easeOut(progress);
         // The band widens and weakens as it travels, and is gone by the end.
-        float width = mix(80.0, 220.0, progress);
+        float width = mix(130.0, 340.0, progress);
         float x = (dist - front) / width;
         float fade = (1.0 - smoothstep(0.5, 1.0, progress)) * smoothstep(0.0, 0.06, progress);
-        float band = exp(-x * x * 2.2);
+        float band = exp(-x * x * 1.6);
 
         // Refraction: outward inside the band's trailing half, inward ahead.
         // It grows with the ring, so the small ring at the start doesn't
         // turn the captured window to jelly.
-        float strength = 26.0 * smoothstep(60.0, 640.0, front);
+        float strength = 42.0 * smoothstep(40.0, 520.0, front);
         float amount = strength * fade * (-x) * band;
         float2 offset = dir * amount;
-        float split = 0.18 * band * fade;
+        float split = 0.10 * band * fade;
         float r = screen.sample(s, (pos - offset * (1.0 + split)) / u.size).r;
         float g = screen.sample(s, (pos - offset) / u.size).g;
         float b = screen.sample(s, (pos - offset * (1.0 - split)) / u.size).b;
@@ -332,12 +331,12 @@ final class CaptureWave: NSObject, MTKViewDelegate {
         // the ring, brightest on the front edge.
         float angle = atan2(delta.y, delta.x);
         float3 tint = 0.5 + 0.5 * cos(angle * 2.0 + u.time * 2.5 + float3(0.0, 2.1, 4.2));
-        float3 light = mix(float3(1.0), tint, 0.22);
+        float3 light = mix(float3(1.0), tint, 0.12);
         float edge = exp(-(x - 0.35) * (x - 0.35) * 9.0);
-        color += light * (band * 0.28 + edge * 0.30) * fade;
+        color += light * (band * 0.16 + edge * 0.20) * fade;
 
         // The screen behind the wave is lit a touch, and settles.
-        float wake = (1.0 - smoothstep(-3.5, 0.0, x)) * 0.05 * fade;
+        float wake = (1.0 - smoothstep(-3.5, 0.0, x)) * 0.03 * fade;
         color += wake;
 
         return float4(color, 1.0);

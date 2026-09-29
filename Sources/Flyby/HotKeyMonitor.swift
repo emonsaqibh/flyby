@@ -132,9 +132,10 @@ final class HotKeyMonitor {
 
         case .modifierChord, .doubleTap:
             let ok = installEventTap()
-            Self.log.info("""
+            Self.log.notice("""
             event tap installed=\(ok, privacy: .public) \
-            trusted=\(Self.isTrusted, privacy: .public)
+            trusted=\(Self.isTrusted, privacy: .public) \
+            listen=\(Self.canListen, privacy: .public)
             """)
             return ok ? .active : .needsAccessibility
         }
@@ -284,7 +285,14 @@ final class HotKeyMonitor {
             if CGEvent.tapIsEnabled(tap: tap) { return }
         }
 
-        Self.log.error("event tap lost trusted=\(Self.isTrusted, privacy: .public); stopping")
+        Self.log.error("event tap lost trusted=\(Self.isTrusted, privacy: .public) listen=\(Self.canListen, privacy: .public); stopping")
+        // Trusted, and switched off anyway: on current macOS a listen-only
+        // tap needs Input Monitoring too. Asked for once a launch.
+        if Self.isTrusted, !Self.canListen, !Self.hasAskedToListen {
+            Self.hasAskedToListen = true
+            Self.log.notice("asking for Input Monitoring")
+            CGRequestListenEventAccess()
+        }
         stop()
         onAccessibilityLost?()
     }
@@ -378,6 +386,10 @@ final class HotKeyMonitor {
     // MARK: - Permission
 
     nonisolated static var isTrusted: Bool { AXIsProcessTrusted() }
+
+    /// Input Monitoring: whether this process may listen to the keyboard.
+    nonisolated static var canListen: Bool { CGPreflightListenEventAccess() }
+    private static var hasAskedToListen = false
 
     /// Prompts for Accessibility access if we don't have it yet.
     @discardableResult

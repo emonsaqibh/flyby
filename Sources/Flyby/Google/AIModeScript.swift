@@ -48,7 +48,9 @@ enum AIModeScript {
     /// What it relies on, all verified against real captures (a live AI Mode
     /// answer from 2026-09-16, Google's CAPTCHA and consent pages):
     /// - answer body: the last `[data-container-id="main-col"]` of the last
-    ///   turn (`[data-xid="aim-mars-turn-root"] > [data-tr-rsts]`);
+    ///   turn — a `[jsname]` child of `[data-xid="aim-mars-turn-root"]`
+    ///   (after a `[data-xid]` placeholder). Text turns also carry
+    ///   `data-tr-rsts`; turns asked with an image don't (2026-09-29);
     /// - citations: `button[data-icl-uuid]` chips whose sibling `a[href]`
     ///   carries the source; side cards under `[data-container-id="rhs-col"]`;
     /// - completion: the footer `[data-xid="Gd7Hsc"]` plus 1.3 s without
@@ -66,6 +68,18 @@ enum AIModeScript {
     ///   its `mstk` token changes. Only a page that renders — in a window on
     ///   screen, as Flyby's is while a chat is open — takes more than one
     ///   follow-up: out of any window, the second is ignored.
+    /// - screenshots (live page, 2026-09-29): AI Mode's start page
+    ///   (`/search?udm=50`, no `q`) shows its own composer,
+    ///   `[data-xid="aim-zero-state-input-plate"]`, with the conversation's
+    ///   in the DOM too but 0×0; under an answer the conversation's is the
+    ///   one. An image pasted into the composer's textarea attaches — no
+    ///   menu, focus or picker — as does one dropped on it, or picked
+    ///   through the "+" menu (`button[aria-haspopup="menu"]`, whose image
+    ///   item holds an `input[type=file]` only while it's open). Its preview
+    ///   is a `[role=button]` chip holding an `img`, with a
+    ///   `[role=progressbar]` showing until the upload is done; Send stays
+    ///   disabled until then when there's text. The answer comes in the same
+    ///   document, the URL rewritten in place.
     ///
     /// `__flyby.followUp(question, turn)` asks a follow-up in the page and
     /// resolves to `"sent"` or the reason it couldn't be; from then on only
@@ -649,8 +663,14 @@ enum AIModeScript {
     return out;
   }
 
+  // A question and its answer: a `[jsname]` child of the turn root, after a
+  // `[data-xid]` placeholder. Text turns also carry `data-tr-rsts`, but
+  // turns asked with an image don't, so structure comes first.
+  var TURN = '[data-xid="aim-mars-turn-root"] > [jsname]:not([data-xid])';
+
   function turnsOf() {
-    var turns = document.querySelectorAll('[data-xid="aim-mars-turn-root"] > [data-tr-rsts]');
+    var turns = document.querySelectorAll(TURN);
+    if (!turns.length) turns = document.querySelectorAll('[data-xid="aim-mars-turn-root"] > [data-tr-rsts]');
     if (!turns.length) turns = document.querySelectorAll('[data-xid="aim-mars-turn-root"] [data-tr-rsts]');
     return turns;
   }
@@ -693,12 +713,12 @@ enum AIModeScript {
   }
 
   function scopeOf(root) {
-    return root.closest('[data-scope-id="turn"]') || root.closest('[data-tr-rsts]') ||
+    return root.closest('[data-scope-id="turn"]') || root.closest(TURN) || root.closest('[data-tr-rsts]') ||
       root.closest('[data-subtree="aimc"]') || document;
   }
 
   function footerDone(root) {
-    var scope = root.closest('[data-scope-id="turn"]') || root.closest('[data-tr-rsts]') ||
+    var scope = root.closest('[data-scope-id="turn"]') || root.closest(TURN) || root.closest('[data-tr-rsts]') ||
       root.closest('[data-subtree="aimc"]') || root;
     var footer = scope.querySelector(FOOTER);
     return !!(footer && footer.querySelector('button, [role="button"]') && rendered(footer));
@@ -920,7 +940,22 @@ enum AIModeScript {
   // MARK: - Follow-ups
 
   var PLATE = '[data-xid="aim-mars-input-plate"]';
+  var START_PLATE = '[data-xid="aim-zero-state-input-plate"]';
   var SEND = 'button[data-xid="input-plate-send-button"]';
+
+  function laidOut(el) {
+    var r = el.getBoundingClientRect();
+    return r.width > 0 && r.height > 0;
+  }
+
+  // The composer a user would type in: on AI Mode's start page its own
+  // (the conversation's is in the DOM there too, but 0×0); under an answer,
+  // the conversation's.
+  function composer() {
+    var plates = document.querySelectorAll(START_PLATE + ', ' + PLATE);
+    for (var i = 0; i < plates.length; i++) if (laidOut(plates[i])) return plates[i];
+    return document.querySelector(PLATE);
+  }
 
   // Which question the page is answering: 0 for the one it loaded with, then
   // the number Swift gives each follow-up. Swift drops messages about any
@@ -964,63 +999,89 @@ enum AIModeScript {
                     { type: opts.imageType || 'image/jpeg', lastModified: Date.now() });
   }
 
-  // Pictures drawn around the composer: a page shows one as soon as it has
-  // a file. Counted a level up too, since a preview can sit just above the
-  // plate rather than in it.
-  function previews(plate) {
-    var scope = plate.parentElement || plate;
-    var n = 0;
-    var els = scope.querySelectorAll('img, [style*="background-image"]');
-    for (var i = 0; i < els.length; i++) if (rendered(els[i])) n++;
-    return n;
+  // An attached image's preview: a `[role=button]` chip in the composer
+  // holding an `img`, with a progress bar while it uploads.
+  function chips(plate) { return plate.querySelectorAll('[role="button"] img'); }
+
+  function uploading(plate) {
+    var bar = plate.querySelector('[role="progressbar"]');
+    return !!(bar && laidOut(bar));
   }
 
-  // Puts the screenshot in the composer, trying what a user would do, in
-  // order: Google's own file input (Flyby answers the file picker it opens
-  // with the screenshot — the click has to come before anything is awaited,
-  // or WebKit won't open a picker for it); the file handed to that input
-  // directly; a paste into the composer. Each counts only if a preview
-  // appears. Resolves to 'attached (<how>)' or 'not-attached (<why>)'.
-  async function attach(plate, opts) {
-    var before = previews(plate);
-    function shown() { return previews(plate) > before; }
-    var inputs = Array.prototype.slice.call(document.querySelectorAll('input[type=file]'));
-    inputs.sort(function (a, b) { return (plate.contains(b) ? 1 : 0) - (plate.contains(a) ? 1 : 0); });
-    var input = inputs[0] || null;
+  // A picture left in the composer by an attempt that didn't send would go
+  // with the next question. A chip reads "Remove …" once hovered, and a
+  // click then takes it off.
+  async function clearAttachments(plate) {
+    for (var n = 0; n < 5; n++) {
+      var img = plate.querySelector('[role="button"] img');
+      if (!img) return;
+      var chip = img.closest('[role="button"]');
+      chip.dispatchEvent(new PointerEvent('pointerover', { bubbles: true }));
+      chip.dispatchEvent(new MouseEvent('mouseover', { bubbles: true }));
+      await sleep(150);
+      chip.click();
+      await waitUntil(function () { return !plate.contains(chip); }, 800);
+    }
+  }
 
-    if (input) {
-      try { input.click(); } catch (e) {}
-      if (await waitUntil(shown, 5000)) return 'attached (picker)';
-    }
-    var file = fileFrom(opts);
-    if (input && !F.stopped) {
-      try {
-        var given = new DataTransfer();
-        given.items.add(file);
-        input.files = given.files;
-        input.dispatchEvent(new Event('input', { bubbles: true }));
-        input.dispatchEvent(new Event('change', { bubbles: true }));
-      } catch (e) {}
-      if (await waitUntil(shown, 5000)) return 'attached (input)';
-    }
+  // Puts the screenshot in the composer the ways a user can, in order: a
+  // paste into it; a drop on it; the image item of the "+" menu, whose file
+  // picker Flyby answers with the screenshot. Each counts once its preview
+  // shows; then the upload has to finish. Resolves to 'attached (<how>)' or
+  // 'not-attached (<why>)'.
+  async function attach(plate, opts) {
     var box = plate.querySelector('textarea');
-    if (box && !F.stopped) {
+    var before = chips(plate).length;
+    function previewed() { return chips(plate).length > before; }
+    var file = fileFrom(opts);
+    var how = null;
+
+    try {
+      var pasted = new DataTransfer();
+      pasted.items.add(file);
+      box.dispatchEvent(new ClipboardEvent('paste', { clipboardData: pasted, bubbles: true, cancelable: true }));
+    } catch (e) {}
+    if (await waitUntil(previewed, 3000)) how = 'paste';
+
+    if (!how && !F.stopped) {
       try {
-        var pasted = new DataTransfer();
-        pasted.items.add(file);
-        box.dispatchEvent(new ClipboardEvent('paste', { clipboardData: pasted, bubbles: true, cancelable: true }));
+        var dropped = new DataTransfer();
+        dropped.items.add(file);
+        var r = box.getBoundingClientRect();
+        ['dragenter', 'dragover', 'drop'].forEach(function (type) {
+          box.dispatchEvent(new DragEvent(type, { dataTransfer: dropped, bubbles: true, cancelable: true,
+                                                  clientX: r.x + r.width / 2, clientY: r.y + r.height / 2 }));
+        });
       } catch (e) {}
-      if (await waitUntil(shown, 5000)) return 'attached (paste)';
+      if (await waitUntil(previewed, 3000)) how = 'drop';
     }
-    return 'not-attached (' + inputs.length + ' file inputs)';
+
+    if (!how && !F.stopped) {
+      var menu = plate.querySelector('button[aria-haspopup="menu"]');
+      var pick = function () { return plate.querySelector('[data-is-aim-input-menu] input[type=file][accept*="image/"]'); };
+      if (menu) {
+        menu.click();
+        await waitUntil(function () { return !!pick(); }, 2000);
+        var input = pick();
+        if (input) {
+          input.click();
+          if (await waitUntil(previewed, 5000)) how = 'picker';
+        }
+      }
+    }
+
+    if (!how) return 'not-attached (no preview)';
+    await sleep(150);
+    if (!await waitUntil(function () { return !uploading(plate); }, 30000)) return 'not-attached (upload never finished)';
+    return 'attached (' + how + ')';
   }
 
   // MARK: - Asking in the composer
 
   // Asks `question` in AI Mode's own composer, so Google answers it in this
-  // conversation. Resolves to 'sent' once the page has taken it, or to why it
-  // couldn't be sent — then Swift asks some other way, and the composer is
-  // left empty.
+  // conversation. Resolves to 'sent' once the page has taken it ('sent,
+  // attached (paste)' with a picture), or to why it couldn't be sent — then
+  // Swift asks some other way, and the composer is left empty.
   //
   // `opts.fresh`: the page is AI Mode's start page, with no conversation on
   // it yet. `opts.image` (base64, with `imageName` and `imageType`): a
@@ -1028,7 +1089,17 @@ enum AIModeScript {
   F.followUp = async function (question, turn, opts) {
     opts = opts || {};
     if (F.stopped) return 'stopped';
-    var plate = document.querySelector(PLATE);
+    // Reader mode hides the composer (it's pinned chrome): off first, so the
+    // composer can be found by where it's laid out, and focused. It's off by
+    // now anyway — a new question hides the page — but only on the next
+    // read; the next read puts it back if it's wanted.
+    document.documentElement.removeAttribute(READER_ATTR);
+    // A start page that has just loaded draws its composer a moment later.
+    if (opts.fresh) {
+      await waitUntil(function () { var p = composer(); return !!(p && laidOut(p) && p.querySelector(SEND)); }, 8000);
+      if (F.stopped) return 'stopped';
+    }
+    var plate = composer();
     var box = plate && plate.querySelector('textarea');
     var send = plate && plate.querySelector(SEND);
     if (!box || !send) return 'no-composer';
@@ -1048,13 +1119,9 @@ enum AIModeScript {
       return now.turns > base.turns || now.mains > base.mains;
     }
 
-    // Reader mode hides the composer (it's pinned chrome), and a hidden field
-    // can't be focused. It's off by now — a new question hides the page — but
-    // only on the next read; the next read puts it back if it's wanted.
-    document.documentElement.removeAttribute(READER_ATTR);
-
-    // The picture first, as a user adds it before typing. Nothing awaited
-    // before this: see attach().
+    // Nothing from an attempt that never sent rides along; then the
+    // picture, as a user adds it before typing.
+    await clearAttachments(plate);
     var attached = null;
     if (opts.image) {
       attached = await attach(plate, opts);
@@ -1072,8 +1139,8 @@ enum AIModeScript {
     await waitUntil(function () { return !ready(send); }, 500);
     typeInto(box, question);
     await sleep(150);
-    // With a picture, Send waits for its upload.
-    await waitUntil(function () { return ready(send); }, attached ? 15000 : 1500);
+    // The upload is done by now, but Send can take a moment to notice.
+    await waitUntil(function () { return ready(send); }, attached ? 5000 : 1500);
     if (F.stopped) return 'stopped';
 
     var how = ready(send) ? 'click' : 'return';
@@ -1095,7 +1162,7 @@ enum AIModeScript {
       if (focused) { try { box.blur(); } catch (e) {} }
       return 'not-sent (' + how + ', send ' + (ready(send) ? 'ready' : 'not ready') + (attached ? ', ' + attached : '') + ')';
     }
-    return 'sent';
+    return attached ? 'sent, ' + attached : 'sent';
   };
 
   F.onStop = function () {

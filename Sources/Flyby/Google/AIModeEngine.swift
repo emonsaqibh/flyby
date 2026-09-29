@@ -189,7 +189,7 @@ final class AIModeEngine: ObservableObject {
         snapshot = .empty
         transition(to: .loading)
         armStallTimer()
-        aiModeLog.info("Search started (\(trimmed.count, privacy: .public) characters\(screenshot == nil ? "" : ", with a screenshot", privacy: .public))")
+        aiModeLog.notice("Search started (\(trimmed.count, privacy: .public) characters\(screenshot == nil ? "" : ", with a screenshot", privacy: .public))")
 
         // A stale Safari/Firefox copy is re-read first, so the page loads with
         // the browser's current session. It returns at once when fresh.
@@ -283,15 +283,18 @@ final class AIModeEngine: ObservableObject {
                 in: Self.contentWorld
             )
             self.fileForPicker = nil
-            guard id == self.searchID, self.isSearchActive, !self.isFrozen else { return }
             let what = screenshot == nil ? "Question" : "Question with a screenshot"
+            guard id == self.searchID, self.isSearchActive, !self.isFrozen else {
+                aiModeLog.notice("\(what, privacy: .public) was superseded or stopped while being asked (\(result ?? "no result", privacy: .public))")
+                return
+            }
             if result == nil, self.documentsCommitted != document {
                 // Sending loaded a new document, which took the script with
                 // it; that document answers from its own first turn.
-                aiModeLog.info("\(what, privacy: .public) sent; the page moved to a new document to answer it")
+                aiModeLog.notice("\(what, privacy: .public) sent; the page moved to a new document to answer it")
                 self.armFollowUpTimer(fallback: fallback, attaching: screenshot)
-            } else if result == "sent" {
-                aiModeLog.info("\(what, privacy: .public) asked in Google's composer (turn \(turn, privacy: .public))")
+            } else if let result, result.hasPrefix("sent") {
+                aiModeLog.notice("\(what, privacy: .public) asked in Google's composer (turn \(turn, privacy: .public)): \(result, privacy: .public)")
                 self.armFollowUpTimer(fallback: fallback, attaching: screenshot)
             } else if let fallback {
                 aiModeLog.error("\(what, privacy: .public) couldn't be asked in the page (\(result ?? "no result", privacy: .public)); searching with the conversation in the query")

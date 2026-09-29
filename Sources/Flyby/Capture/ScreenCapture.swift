@@ -8,16 +8,18 @@ private let captureLog = Logger(subsystem: "com.fringecore.flyby", category: "ca
 /// asked about.
 ///
 /// What's captured is the front window of the app the user was in — just
-/// that window, as if nothing overlapped it, without its shadow. With no such
-/// window (the desktop, an app with none open) it's the whole display under
-/// the pointer instead. Alongside it, the display the window is on, without
-/// anything of Flyby's, for `CaptureWave` to play over; that picture is never
-/// sent anywhere.
+/// that window, as if nothing overlapped it, without its shadow. When that
+/// app has none (or it was Flyby itself, from Settings, say), it's the
+/// frontmost ordinary window that isn't Flyby's; with none at all (a bare
+/// desktop), the whole display under the pointer. Alongside it, the display
+/// Flyby's bar is on, without anything of Flyby's, for `CaptureWave` to play
+/// over; that picture is never sent anywhere.
 enum ScreenCapture {
     struct Capture {
         let screenshot: Screenshot
-        /// The window's display as it looked, without Flyby.
+        /// `screen` as it looked, without Flyby.
         let display: CGImage
+        /// Where the bar is, or will open: the wave's screen.
         let screen: NSScreen
         /// The captured window, in AppKit's screen coordinates.
         let windowFrame: CGRect
@@ -50,9 +52,10 @@ enum ScreenCapture {
         }
     }
 
-    /// `app` is the app the user was in — never Flyby.
+    /// `app` is the app the user was in — never Flyby. `waveScreen` is where
+    /// Flyby's bar is or will open; without one, the window's screen.
     @MainActor
-    static func capture(windowOf app: NSRunningApplication?) async throws -> Capture {
+    static func capture(windowOf app: NSRunningApplication?, waveScreen: NSScreen? = nil) async throws -> Capture {
         guard hasPermission else { throw Failure.notAllowed }
         let content: SCShareableContent
         do {
@@ -66,7 +69,7 @@ enum ScreenCapture {
         let frame = window.map { appKitFrame(fromGlobal: $0.frame) }
             ?? NSScreen.screens.first { $0.frame.contains(NSEvent.mouseLocation) }?.frame
             ?? NSScreen.main?.frame ?? .zero
-        guard let screen = screen(containing: frame),
+        guard let screen = waveScreen ?? screen(containing: frame),
               let display = content.displays.first(where: { $0.displayID == screen.displayID }) else {
             throw Failure.failed("the window isn't on a display")
         }
@@ -88,7 +91,7 @@ enum ScreenCapture {
             guard let screenshot = Screenshot(image: shot, title: title) else {
                 throw Failure.failed("the picture couldn't be encoded")
             }
-            captureLog.info("Captured \(shot.width, privacy: .public)×\(shot.height, privacy: .public) (\(window == nil ? "display" : "window", privacy: .public))")
+            captureLog.notice("Captured \(shot.width, privacy: .public)×\(shot.height, privacy: .public): \(window == nil ? "the display" : "a window of \(window?.owningApplication?.applicationName ?? "?")", privacy: .public) (asked for \(app?.localizedName ?? "no app", privacy: .public))")
             return Capture(screenshot: screenshot, display: try await displayImage, screen: screen, windowFrame: frame)
         } catch let failure as Failure {
             throw failure
@@ -100,24 +103,28 @@ enum ScreenCapture {
 
     // MARK: - Pieces
 
-    /// The app's frontmost ordinary window, from the window server's
-    /// front-to-back list. IDs and bounds need no permission; names would.
+    /// The app's frontmost ordinary window, or else the frontmost ordinary
+    /// window of any app but Flyby — from the window server's front-to-back
+    /// list. IDs and bounds need no permission; names would.
     private static func frontWindow(of app: NSRunningApplication?) -> CGWindowID? {
-        guard let pid = app?.processIdentifier,
-              pid != ProcessInfo.processInfo.processIdentifier,
-              let list = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]]
+        let own = ProcessInfo.processInfo.processIdentifier
+        guard let list = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]]
         else { return nil }
-        for info in list {
-            guard (info[kCGWindowOwnerPID as String] as? pid_t) == pid,
+        let candidates: [(pid: pid_t, id: CGWindowID)] = list.compactMap { info in
+            guard let pid = info[kCGWindowOwnerPID as String] as? pid_t, pid != own,
                   (info[kCGWindowLayer as String] as? Int) == 0,
                   (info[kCGWindowAlpha as String] as? Double ?? 1) > 0.01,
                   let bounds = info[kCGWindowBounds as String] as? [String: CGFloat],
                   (bounds["Width"] ?? 0) > 60, (bounds["Height"] ?? 0) > 40,
                   let number = info[kCGWindowNumber as String] as? CGWindowID
-            else { continue }
-            return number
+            else { return nil }
+            return (pid, number)
         }
-        return nil
+        if let pid = app?.processIdentifier, let mine = candidates.first(where: { $0.pid == pid }) {
+            return mine.id
+        }
+        captureLog.notice("No window of \(app?.localizedName ?? "the previous app", privacy: .public); taking the frontmost other window")
+        return candidates.first?.id
     }
 
     private static func image(of filter: SCContentFilter, size: CGSize, singleWindow: Bool = false) async throws -> CGImage {

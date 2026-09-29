@@ -43,12 +43,17 @@ private let debugLog = Logger(subsystem: "com.fringecore.flyby", category: "debu
 /// - `-FlybyDebugImage <path>`: a picture sent with the first question, as
 ///   if it had been captured — and, with the console, the file the page gets
 ///   when it opens a file picker.
+/// - `-FlybyDebugFollowUpImage <path>`: a picture sent with the follow-up.
 /// - `-FlybyDebugCapture YES`: a second after launch, a real screenshot of
 ///   the frontmost window, wave and all, as the shortcut takes one.
 ///
+/// A scripted run doesn't listen for Flyby's shortcuts, so using Flyby
+/// meanwhile can't open, close or reset the chat under it; if something
+/// resets it anyway, the run says so and stops.
+///
 /// Each answer's first 300 characters are logged publicly under the `debug`
-/// category, and the engine logs (under `aimode`) which way each follow-up
-/// went:
+/// category, at notice level so they're kept, and the engine logs (under
+/// `aimode`) which way each follow-up went:
 ///
 ///     log show --last 5m --info \
 ///         --predicate 'subsystem == "com.fringecore.flyby"'
@@ -57,12 +62,15 @@ enum AIModeDebug {
     /// `-FlybyDebugForceFallback YES`.
     static var forcesFallback: Bool { flag("FlybyDebugForceFallback") }
 
+    /// A scripted conversation is running (`-FlybyDebugAsk`).
+    static var isScripted: Bool { string("FlybyDebugAsk") != nil }
+
     /// `showPanel` opens Flyby as the hot key does.
     static func runIfAsked(_ controller: SearchController, showPanel: @escaping () -> Void) {
         if flag("FlybyDebugCapture") {
             Task { @MainActor in
                 try? await Task.sleep(nanoseconds: 1_000_000_000)
-                debugLog.info("Capturing the frontmost window")
+                debugLog.notice("Capturing the frontmost window")
                 controller.captureScreen()
             }
         }
@@ -73,48 +81,59 @@ enum AIModeDebug {
                 showPanel()
                 try? await Task.sleep(nanoseconds: 600_000_000)
             }
-            if let path = string("FlybyDebugImage") {
-                if let screenshot = Screenshot(contentsOf: URL(fileURLWithPath: path)) {
-                    controller.attach(screenshot)
-                    debugLog.info("Q1 goes with \(path, privacy: .public) (\(screenshot.upload.count, privacy: .public) bytes)")
-                } else {
-                    debugLog.error("Couldn't read \(path, privacy: .public) as an image")
-                }
-            }
-            debugLog.info("Q1: \(first, privacy: .public)")
-            await ask("Q1", of: controller, step: 1) { controller.send(first, with: .aiMode) }
+            attachImage("FlybyDebugImage", to: controller, for: "Q1")
+            debugLog.notice("Q1: \(first, privacy: .public)")
+            guard await ask("Q1", of: controller, step: 1, { controller.send(first, with: .aiMode) }) else { return finish() }
 
             guard let followUp else { return finish() }
             if flag("FlybyDebugReopen") {
                 guard await reopen(controller, titled: first) else { return finish() }
             }
-            debugLog.info("Q2: \(followUp, privacy: .public)")
+            debugLog.notice("Q2: \(followUp, privacy: .public)")
             let composed = AIModeFollowUp.query(followUp, after: controller.earlierTurns + [liveTurn(controller)])
-            debugLog.info("Q2 as a search, if it comes to that: \(composed, privacy: .public)")
-            await ask("Q2", of: controller, step: 2) { controller.send(followUp, with: .aiMode) }
+            debugLog.notice("Q2 as a search, if it comes to that: \(composed, privacy: .public)")
+            attachImage("FlybyDebugFollowUpImage", to: controller, for: "Q2")
+            guard await ask("Q2", of: controller, step: 2, { controller.send(followUp, with: .aiMode) }) else { return finish() }
 
             if let then = string("FlybyDebugThen") {
-                debugLog.info("Q3: \(then, privacy: .public)")
-                await ask("Q3", of: controller, step: 3) { controller.send(then, with: .aiMode) }
+                debugLog.notice("Q3: \(then, privacy: .public)")
+                guard await ask("Q3", of: controller, step: 3, { controller.send(then, with: .aiMode) }) else { return finish() }
             }
             if flag("FlybyDebugRetry") {
-                debugLog.info("Retrying the last question")
-                await ask("Retried", of: controller, step: 4) { controller.retry() }
+                debugLog.notice("Retrying the last question")
+                guard await ask("Retried", of: controller, step: 4, { controller.retry() }) else { return finish() }
             }
             finish()
         }
     }
 
+    /// The picture at the path in `key`, waiting over the input as a capture
+    /// would, for the next question.
+    private static func attachImage(_ key: String, to controller: SearchController, for label: String) {
+        guard let path = string(key) else { return }
+        if let screenshot = Screenshot(contentsOf: URL(fileURLWithPath: path)) {
+            controller.attach(screenshot)
+            debugLog.notice("\(label, privacy: .public) goes with \(path, privacy: .public) (\(screenshot.upload.count, privacy: .public) bytes)")
+        } else {
+            debugLog.error("Couldn't read \(path, privacy: .public) as an image")
+        }
+    }
+
     /// Does `action`, waits for the turn to settle, and reports on it.
-    private static func ask(_ label: String, of controller: SearchController, step: Int, _ action: () -> Void) async {
+    /// False when the chat was reset before it did.
+    private static func ask(_ label: String, of controller: SearchController, step: Int, _ action: () -> Void) async -> Bool {
         action()
-        await settle(controller)
+        let settled = await settle(controller)
         report(controller, label: label)
         await probe(controller, step: step)
+        if !settled {
+            debugLog.error("\(label, privacy: .public): the chat was reset before it was answered (Flyby opened or closed?); stopping")
+        }
+        return settled
     }
 
     private static func finish() {
-        debugLog.info("Debug run finished")
+        debugLog.notice("Debug run finished")
     }
 
     /// Stands in for the live turn when predicting the fallback query; only
@@ -132,7 +151,7 @@ enum AIModeDebug {
                 for _ in 0..<40 where !controller.isRestored {
                     try? await Task.sleep(nanoseconds: 100_000_000)
                 }
-                debugLog.info("Reopened the chat from history (restored: \(controller.isRestored, privacy: .public))")
+                debugLog.notice("Reopened the chat from history (restored: \(controller.isRestored, privacy: .public))")
                 return controller.isRestored
             }
             try? await Task.sleep(nanoseconds: 100_000_000)
@@ -142,19 +161,22 @@ enum AIModeDebug {
     }
 
     /// Until the turn is done one way or another, or two minutes pass.
-    private static func settle(_ controller: SearchController) async {
+    /// False if the chat went back to idle — reset — on the way.
+    private static func settle(_ controller: SearchController) async -> Bool {
         for _ in 0..<240 {
             try? await Task.sleep(nanoseconds: 500_000_000)
             switch controller.phase {
-            case .complete, .failed, .needsAttention: return
-            case .idle, .working, .streaming: continue
+            case .complete, .failed, .needsAttention: return true
+            case .idle: return false
+            case .working, .streaming: continue
             }
         }
+        return true
     }
 
     private static func report(_ controller: SearchController, label: String) {
         let text = String(controller.answer.bodyText.prefix(300)).replacingOccurrences(of: "\n", with: " ")
-        debugLog.info("\(label, privacy: .public) [\(String(describing: controller.phase), privacy: .public)] bubble: \"\(controller.submittedQuery, privacy: .public)\" answer: \(text, privacy: .public)")
+        debugLog.notice("\(label, privacy: .public) [\(String(describing: controller.phase), privacy: .public)] bubble: \"\(controller.submittedQuery, privacy: .public)\" answer: \(text, privacy: .public)")
     }
 
     private static func probe(_ controller: SearchController, step: Int) async {
@@ -163,7 +185,7 @@ enum AIModeDebug {
         let path = "\(base).\(step).json"
         do {
             try json.write(toFile: path, atomically: true, encoding: .utf8)
-            debugLog.info("Page described in \(path, privacy: .public)")
+            debugLog.notice("Page described in \(path, privacy: .public)")
         } catch {
             debugLog.error("Couldn't write \(path, privacy: .public): \(error.localizedDescription, privacy: .public)")
         }
@@ -197,7 +219,7 @@ enum AIModeDebug {
         window.orderFrontRegardless()
         consoleWindow = window
         engine.prewarm()
-        debugLog.info("Console watching \(path, privacy: .public)")
+        debugLog.notice("Console watching \(path, privacy: .public)")
 
         Task { @MainActor in
             var lastRun: Date?
@@ -225,7 +247,7 @@ enum AIModeDebug {
                    let png = NSBitmapImageRep(data: tiff)?.representation(using: .png, properties: [:]) {
                     try? png.write(to: URL(fileURLWithPath: path + ".png"))
                 }
-                debugLog.info("Console ran \(path, privacy: .public)")
+                debugLog.notice("Console ran \(path, privacy: .public)")
             }
         }
     }
