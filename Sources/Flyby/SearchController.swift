@@ -65,6 +65,9 @@ final class SearchController: ObservableObject {
     @Published private(set) var pendingScreenshot: Screenshot?
     /// What the input says about screenshots, when there's something to say.
     @Published var captureNotice: CaptureNotice?
+    /// Open for the walkthrough's practice step, before setup is done: the
+    /// bar only asks to be put away, and doesn't take questions.
+    @Published var isPracticing = false
 
     /// The user asked to see Google's page instead of the native answer.
     /// Tells the engine too, so reader mode can strip Google's chrome from
@@ -147,6 +150,10 @@ final class SearchController: ObservableObject {
     /// otherwise. With the history list open and nothing typed, Return opens
     /// the highlighted conversation instead.
     func submit() {
+        if isPracticing {
+            NSSound.beep()
+            return
+        }
         // "/set" and Return: the highlighted command, not a search for it.
         if !commands.isEmpty {
             runSelectedCommand()
@@ -721,6 +728,9 @@ extension ProviderKind {
 
 extension Notification.Name {
     static let quickSearchShouldDismiss = Notification.Name("quickSearchShouldDismiss")
+    /// The bar opened for the practice step was put away: Esc, the shortcut
+    /// again, or a click elsewhere.
+    static let flybyPracticeDidClose = Notification.Name("flybyPracticeDidClose")
     /// The screenshot button, `/screenshot`: capture the window the user was in.
     static let flybyShouldCaptureScreen = Notification.Name("flybyShouldCaptureScreen")
     /// Puts the keyboard back in the input.

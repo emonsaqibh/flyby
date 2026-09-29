@@ -21,6 +21,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// The main shortcut's state, as `installShortcut` last found it.
     private var mainShortcutHealth: ShortcutHealth = .ok
     private var isCapturing = false
+    /// The bar is open for the practice step, before setup is done: it's
+    /// there to be put away, and asks nothing.
+    private var isPracticing = false
     private var waveGeneration = 0
     // Lazy, so a launch that hands straight over to the installed copy never
     // builds a window it won't use.
@@ -451,7 +454,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             NotificationCenter.default.post(name: .flybyDidTriggerShortcut, object: nil)
             guard let self else { return }
             if let onboardingWindow = self.onboardingWindow {
-                self.bringToFront(onboardingWindow)
+                // The practice step: the real bar opens, to be put away with
+                // Esc — the whole trick, both halves. Anywhere else in the
+                // walkthrough a press only brings it back to the front.
+                if !self.isShowingWhatsNew, AppSettings.shared.onboardingStep == "practice" {
+                    if self.stage.isPresented { self.hideFlyby() } else { self.showFlyby(practicing: true) }
+                } else {
+                    self.bringToFront(onboardingWindow)
+                }
                 return
             }
             self.toggleFlyby()
@@ -635,10 +645,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    /// The screenshot shortcut during setup: the wave crosses the screen if
-    /// Flyby can see it, and the screenshot step hears that it worked.
-    /// Nothing is attached and Flyby doesn't open. The walkthrough window is
-    /// lifted over the wave, which would otherwise hide it for a second.
+    /// The screenshot shortcut during the walkthrough or What's new, tried
+    /// for real: the wave crosses the screen and the bar opens with the
+    /// picture attached — the practice kind of bar, which takes no questions
+    /// and is there to be put away with Esc, like the shortcut step's. The
+    /// walkthrough is lifted over the wave, which would otherwise hide it for
+    /// a moment.
     private func practiceScreenshot() {
         guard ScreenCapture.hasPermission else {
             ScreenCapture.requestPermission()
@@ -648,15 +660,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         Task { @MainActor [weak self] in
             guard let self else { return }
             defer { self.isCapturing = false }
-            guard let capture = try? await ScreenCapture.capture(windowOf: nil) else { return }
+            let screen = self.stage.isPresented ? (self.panel.screen ?? FlybyPanel.activeScreen) : FlybyPanel.activeScreen
+            guard let capture = try? await ScreenCapture.capture(windowOf: nil, waveScreen: screen) else { return }
             let window = self.onboardingWindow
             let resting = window?.level ?? .normal
             window?.level = NSWindow.Level(rawValue: NSWindow.Level.screenSaver.rawValue + 1)
-            CaptureWave.play(
-                over: capture.screen, showing: capture.display,
-                from: FlybyPanel.barCenter(on: capture.screen), focus: capture.windowFrame,
-                level: .screenSaver
-            ) { window?.level = resting }
+            self.playWave(for: capture) { window?.level = resting }
+            if !self.stage.isPresented { self.showFlyby(practicing: true) }
+            self.controller.attach(capture.screenshot)
             NotificationCenter.default.post(name: .flybyDidTriggerScreenshotShortcut, object: nil)
         }
     }
@@ -683,7 +694,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// From the middle of the bar, over everything on its display, the menu
     /// bar and Dock included — except the bar itself, lifted above it until
     /// it's done, so it can open while the wave crosses the screen behind it.
-    private func playWave(for capture: ScreenCapture.Capture) {
+    private func playWave(for capture: ScreenCapture.Capture, completion: (() -> Void)? = nil) {
         waveGeneration += 1
         let generation = waveGeneration
         let resting = NSWindow.Level.floating
@@ -694,6 +705,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             from: FlybyPanel.barCenter(on: capture.screen), focus: capture.windowFrame,
             level: .screenSaver
         ) { [weak self] in
+            completion?()
             guard let self, generation == self.waveGeneration else { return }
             self.panel.level = resting
         }
@@ -705,11 +717,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if stage.isPresented { hideFlyby() } else { showFlyby() }
     }
 
-    private func showFlyby() {
+    /// `practicing`: for the practice step, which is the one way in before
+    /// setup is done.
+    private func showFlyby(practicing: Bool = false) {
         guard isRunning else { return }
         // Flyby is for after setup: until then, every way in leads back to
         // the walkthrough, on the step it was left on.
-        guard AppSettings.shared.hasCompletedOnboarding else {
+        guard AppSettings.shared.hasCompletedOnboarding || practicing else {
             showOnboarding()
             return
         }
@@ -719,6 +733,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // doesn't play the card folding back into the bar on its way out.
         stage.prepare()
         controller.reset()
+        isPracticing = practicing
+        controller.isPracticing = practicing
         guard let screen = FlybyPanel.activeScreen else { return }
 
         // Reopened mid-close: this app is still frontmost, and the app to go
@@ -775,6 +791,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let previous = previousApp
         previousApp = nil
 
+        // Put away in the practice step: that's the lesson learned, and the
+        // walkthrough comes back to the front once the bar's gone.
+        let practiced = isPracticing
+        if practiced {
+            isPracticing = false
+            NotificationCenter.default.post(name: .flybyPracticeDidClose, object: nil)
+        }
+
         // With Settings or onboarding open, hand focus back without hiding
         // anything — the practice step literally asks for Esc. Otherwise
         // the app hides once the animation is done, which also returns focus
@@ -792,7 +816,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             guard let self, generation == self.presentationGeneration else { return }
             self.panel.orderOut(nil)
             self.controller.reset()
-            if self.visibleAuxiliaryWindow == nil, NSApp.isActive {
+            self.controller.isPracticing = false
+            if practiced, let onboardingWindow = self.onboardingWindow {
+                self.bringToFront(onboardingWindow)
+            } else if self.visibleAuxiliaryWindow == nil, NSApp.isActive {
                 NSApp.hide(nil)
             }
         }

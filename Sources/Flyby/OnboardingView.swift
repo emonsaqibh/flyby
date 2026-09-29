@@ -40,6 +40,8 @@ struct OnboardingView: View {
 
     @State private var step: Step
     @State private var direction: OnboardingDirection = .forward
+    /// The practice step's bar is open, waiting to be put away.
+    @State private var practiceOpened = false
     @State private var practiceSucceeded = false
     /// When the practice shortcut last fired, for the aura's burst of light.
     @State private var celebratedAt: Date?
@@ -96,11 +98,18 @@ struct OnboardingView: View {
         }
         .frame(width: Self.size.width, height: Self.size.height)
         .ignoresSafeArea()
+        // Open, then put away: the shortcut opens the bar, Esc closes it.
         .onReceive(NotificationCenter.default.publisher(for: .flybyDidTriggerShortcut)) { _ in
+            if step == .practice, !practiceSucceeded, !practiceOpened {
+                withAnimation(.spring(duration: 0.5, bounce: 0.25)) { practiceOpened = true }
+            }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .flybyPracticeDidClose)) { _ in
             if step == .practice, !practiceSucceeded { celebrate() }
         }
         // Firing the old shortcut proves nothing about a new one.
         .onChange(of: settings.shortcut) { _, _ in
+            practiceOpened = false
             practiceSucceeded = false
         }
         .onAppear {
@@ -130,7 +139,7 @@ struct OnboardingView: View {
         case .google:
             GoogleStep()
         case .practice:
-            PracticeStep(settings: settings, succeeded: practiceSucceeded, onRecordingChanged: onRecordingChanged)
+            PracticeStep(settings: settings, opened: practiceOpened, succeeded: practiceSucceeded, onRecordingChanged: onRecordingChanged)
         case .screenshot:
             ScreenshotStep(settings: settings, onRecordingChanged: onRecordingChanged, isNew: mode == .whatsNew)
         case .done:

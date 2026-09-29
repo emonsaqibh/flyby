@@ -12,8 +12,9 @@ import Combine
 /// The grant is macOS's: Allow asks, System Settings is where it's given,
 /// and macOS only lets Flyby use it after a relaunch — its own "Quit &
 /// Reopen", or Reopen Flyby here. The walkthrough comes back to this step
-/// either way. Once it's allowed, pressing the shortcut is a practice run:
-/// the wave crosses the screen and the keys light up, and nothing opens.
+/// either way. Once it's allowed, the shortcut is tried for real — the wave
+/// crosses the screen and the bar opens with the picture attached — and Esc
+/// puts it away, which is when the step is done.
 struct ScreenshotStep: View {
     @ObservedObject var settings: AppSettings
     @ObservedObject private var health = ShortcutHealthModel.shared
@@ -25,7 +26,11 @@ struct ScreenshotStep: View {
     @State private var allowed = ScreenCapture.hasPermission
     /// Allow was clicked: from here, what's left is the relaunch.
     @State private var asked = false
+    /// The bar is open with the picture, waiting for Esc.
+    @State private var opened = false
     @State private var tried = false
+
+    private static let escape = Shortcut(keyCode: Shortcut.escapeKeyCode, modifiers: [])
 
     private let poll = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
 
@@ -41,8 +46,10 @@ struct ScreenshotStep: View {
             // would have done.
             ZStack {
                 if let shortcut = settings.screenshotShortcut {
-                    KeyCapsView(shortcut: shortcut, mode: keysMode)
-                        .id(shortcut.displayString)
+                    // The keys to press now: the shortcut, then esc.
+                    let showsEscape = opened && !tried
+                    KeyCapsView(shortcut: showsEscape ? Self.escape : shortcut, mode: keysMode)
+                        .id(showsEscape ? "esc" : shortcut.displayString)
                         .transition(SoftSwapTransition())
                 } else {
                     IconBadge("camera.viewfinder", color: .gray, size: 64)
@@ -84,12 +91,16 @@ struct ScreenshotStep: View {
         .animation(.smooth(duration: 0.4), value: allowed)
         .animation(.smooth(duration: 0.4), value: asked)
         .animation(.spring(duration: 0.5, bounce: 0.3), value: tried)
+        .animation(.smooth(duration: 0.4), value: opened)
         .onReceive(poll) { _ in
             let now = ScreenCapture.hasPermission
             if now != allowed { allowed = now }
         }
         .onReceive(NotificationCenter.default.publisher(for: .flybyDidTriggerScreenshotShortcut)) { _ in
-            if allowed { tried = true }
+            if allowed, !tried { opened = true }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .flybyPracticeDidClose)) { _ in
+            if opened { tried = true }
         }
     }
 
@@ -112,7 +123,9 @@ struct ScreenshotStep: View {
         } else if !allowed {
             permission
         } else if tried {
-            confirmation("That's it. It goes in with your next question — nothing leaves your Mac until you press Return.")
+            confirmation("That's it. The picture goes with your next question — nothing leaves your Mac until you press Return.")
+        } else if opened {
+            confirmation("There it is, attached in Flyby. Now press esc to put it away.")
         } else {
             confirmation("Screen Recording is on. Press \(settings.screenshotShortcut?.displayString ?? "the shortcut") to try it.")
         }

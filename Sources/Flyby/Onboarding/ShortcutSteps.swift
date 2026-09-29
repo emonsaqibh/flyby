@@ -6,12 +6,14 @@ import SwiftUI
 // MARK: - Practice
 
 /// Proof it all works: the user fires the real shortcut, and Flyby appears.
-/// The shortcut, tried for real. Pressing it here only counts as practice —
-/// Flyby doesn't open until setup is done — and the keys light up when it
-/// lands. The recorder is a click away for anyone who wants other keys, and
-/// out on its own when the shortcut is taken by another app.
+/// The whole trick, tried for real: the shortcut opens the actual bar, and
+/// Esc puts it away — which is when it's learned. The bar takes no questions
+/// until setup is done. The recorder is a click away for anyone who wants
+/// other keys, and out on its own when the shortcut is taken by another app.
 struct PracticeStep: View {
     @ObservedObject var settings: AppSettings
+    /// The bar is open, waiting for Esc.
+    let opened: Bool
     let succeeded: Bool
     /// Pauses the live hot keys while the recorder is armed.
     let onRecordingChanged: (Bool) -> Void
@@ -24,19 +26,29 @@ struct PracticeStep: View {
     @State private var changing = false
 
     private var shortcut: Shortcut { settings.shortcut }
+    private static let escape = Shortcut(keyCode: Shortcut.escapeKeyCode, modifiers: [])
+
+    private var title: String {
+        if succeeded { return "You've got it!" }
+        return opened ? "Now press esc" : "Summon Flyby from anywhere"
+    }
+
+    private var subtitle: String {
+        if succeeded { return "\(shortcut.displayString) to open, esc to put it away — over whatever you're doing." }
+        return opened
+            ? "That puts Flyby away again. So does \(shortcut.displayString)."
+            : "Press \(shortcut.displayString) to open it."
+    }
 
     var body: some View {
         VStack(spacing: 0) {
-            StepHeader(
-                title: succeeded ? "You've got it!" : "Summon Flyby from anywhere",
-                subtitle: succeeded
-                    ? "Once you're set up, that opens Flyby over whatever you're doing."
-                    : "Press \(shortcut.displayString) to try it."
-            )
+            StepHeader(title: title, subtitle: subtitle)
 
             ZStack {
-                KeyCapsView(shortcut: shortcut, mode: succeeded ? .celebrating : .waiting)
-                    .id(shortcut.displayString)
+                // The keys to press now: the shortcut, then esc; lit once done.
+                KeyCapsView(shortcut: opened && !succeeded ? Self.escape : shortcut, mode: succeeded ? .celebrating : .waiting)
+                    .id(opened && !succeeded ? "esc" : shortcut.displayString)
+                    .transition(SoftSwapTransition())
                     .opacity(showsCheck ? 0 : 1)
                     .blur(radius: showsCheck && !reduceMotion ? 14 : 0)
                     .scaleEffect(showsCheck && !reduceMotion ? 0.8 : 1)
@@ -64,6 +76,7 @@ struct PracticeStep: View {
                 .padding(.top, 16)
         }
         .animation(.smooth(duration: 0.4), value: shortcut)
+        .animation(.smooth(duration: 0.4), value: opened)
         .animation(.smooth(duration: 0.3), value: changing)
         .task(id: succeeded) {
             guard succeeded else {
@@ -77,7 +90,7 @@ struct PracticeStep: View {
 
     /// "Listening" while waiting; quietly gone once it's worked.
     private var listening: some View {
-        Label("Listening for your shortcut…", systemImage: "dot.radiowaves.left.and.right")
+        Label(opened ? "Waiting for esc…" : "Listening for your shortcut…", systemImage: "dot.radiowaves.left.and.right")
             .font(.system(size: 13))
             .foregroundStyle(.secondary)
             .symbolEffect(.variableColor.iterative, isActive: !succeeded && !reduceMotion)

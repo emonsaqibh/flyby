@@ -61,7 +61,10 @@ struct QueryField: View {
     /// Who the question goes to: "Ask Gemini", or "Search DuckDuckGo".
     private var prompt: String { settings.provider.prompt(engine: settings.engine) }
 
-    private var placeholder: String { isFollowUp ? "Ask a follow-up" : prompt }
+    private var placeholder: String {
+        if controller.isPracticing { return "Now press esc to put Flyby away" }
+        return isFollowUp ? "Ask a follow-up" : prompt
+    }
 
     /// Reading the card, with the keyboard out of the field: Tab brings it
     /// back, and the field says so.
