@@ -57,6 +57,10 @@ next launch. Flyby notices and offers to move itself; Settings › General keeps
 - **Double-tap and chord shortcuts work on macOS 27,** which gates them behind
   Input Monitoring as well as Accessibility; Flyby now asks for both.
 
+**0.5.1** says when a double-tap or chord screenshot shortcut is waiting for
+Accessibility or Input Monitoring, and how to fix it
+([notes](docs/releases/0.5.1.md)).
+
 Full notes: [docs/releases/0.5.0.md](docs/releases/0.5.0.md).
 
 ## What's new in 0.4

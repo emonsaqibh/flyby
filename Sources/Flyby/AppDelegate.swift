@@ -20,6 +20,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let screenshotHotKeys = HotKeyMonitor(number: 2) { AppSettings.shared.screenshotShortcut }
     private var screenshotPermissionPoll: Task<Void, Never>?
     private var hasAskedForScreenshotAccessibility = false
+    /// The main shortcut's state, as `installShortcut` last found it.
+    private var mainShortcutHealth: ShortcutHealth = .ok
     private var isCapturing = false
     private var waveGeneration = 0
     // Lazy, so a launch that hands straight over to the installed copy never
@@ -504,9 +506,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         screenshotPermissionPoll?.cancel()
         screenshotPermissionPoll = nil
         switch screenshotHotKeys.reload() {
-        case .active, .paused, .off:
+        case .active, .off:
+            setScreenshotProblem(nil)
+        case .paused:
             break
         case .needsAccessibility:
+            setScreenshotProblem(.needsKeyboardAccess)
             if !hasAskedForScreenshotAccessibility, AppSettings.shared.hasCompletedOnboarding {
                 hasAskedForScreenshotAccessibility = true
                 HotKeyMonitor.requestKeyboardAccess()
@@ -516,15 +521,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     try? await Task.sleep(nanoseconds: 1_000_000_000)
                     guard !Task.isCancelled, let self else { return }
                     if self.screenshotHotKeys.isPaused || !HotKeyMonitor.hasKeyboardAccess { continue }
-                    if self.screenshotHotKeys.reload() != .needsAccessibility { return }
+                    if self.screenshotHotKeys.reload() != .needsAccessibility {
+                        self.setScreenshotProblem(nil)
+                        return
+                    }
                 }
             }
         case .unavailable(let reason):
+            setScreenshotProblem(.unavailable(reason))
             if reportProblems, reason != lastReportedProblem {
                 lastReportedProblem = reason
                 Task { @MainActor [weak self] in self?.presentUnavailableAlert(reason) }
             }
         }
+    }
+
+    /// Said under the screenshot recorder, and — the menu bar being the one
+    /// place a dead shortcut can be noticed from — there too.
+    private func setScreenshotProblem(_ problem: ShortcutHealthModel.Problem?) {
+        ShortcutHealthModel.shared.screenshot = problem
+        refreshStatusItem()
     }
 
     /// The recorder has the keyboard: pause the live shortcut (which also
@@ -962,9 +978,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         shortcutProblemMenuItem = problemItem
     }
 
-    /// The menu bar is the only surface the user can see when the shortcut is
-    /// dead, so it carries the warning.
+    /// The menu bar is the only surface the user can see when a shortcut is
+    /// dead, so it carries the warning — the main shortcut's first, then the
+    /// screenshot one's. The recorders say it too.
     private func updateStatusItem(_ health: ShortcutHealth) {
+        mainShortcutHealth = health
+        let model = ShortcutHealthModel.shared
+        switch health {
+        case .ok:                       model.main = nil
+        case .needsAccessibility:       model.main = .needsKeyboardAccess
+        case .unavailable(let reason):  model.main = .unavailable(reason)
+        }
+        refreshStatusItem()
+    }
+
+    private func refreshStatusItem() {
+        var health = mainShortcutHealth
+        if case .ok = health {
+            switch ShortcutHealthModel.shared.screenshot {
+            case .needsKeyboardAccess:      health = .needsAccessibility
+            case .unavailable(let reason):  health = .unavailable(reason)
+            case nil:                       break
+            }
+        }
         switch health {
         case .ok:
             accessibilityMenuItem?.isHidden = true

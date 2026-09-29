@@ -8,6 +8,7 @@ import SwiftUI
 /// what's new, for people updating from before screenshots.
 struct ScreenshotStep: View {
     @ObservedObject var settings: AppSettings
+    @ObservedObject private var health = ShortcutHealthModel.shared
     /// Pauses the live hot keys while the recorder is armed.
     let onRecordingChanged: (Bool) -> Void
     /// For someone who already knows Flyby: say it's new.
@@ -57,13 +58,25 @@ struct ScreenshotStep: View {
             .reveal(.controls, blurs: false)
             .padding(.top, 30)
 
-            StepFootnote(footnote)
-                .id(footnote)
-                .transition(SoftSwapTransition())
-                .reveal(.footnote)
-                .padding(.top, 14)
+            // What's keeping the shortcut from working, in place of the
+            // small print, while something is.
+            Group {
+                if let problem = health.shownScreenshot {
+                    ShortcutProblemNote(problem: problem)
+                        .padding(12)
+                        .frame(width: 470)
+                        .paneGlass(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                } else {
+                    StepFootnote(footnote)
+                        .id(footnote)
+                }
+            }
+            .transition(SoftSwapTransition())
+            .reveal(.footnote)
+            .padding(.top, 14)
         }
         .animation(.smooth(duration: 0.4), value: settings.screenshotShortcut)
+        .animation(.smooth(duration: 0.4), value: health.shownScreenshot)
     }
 
     private var footnote: String {

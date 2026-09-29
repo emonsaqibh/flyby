@@ -4,6 +4,7 @@ import SwiftUI
 /// actually press, with the recorder to change it right below.
 struct ShortcutPane: View {
     @ObservedObject private var settings = AppSettings.shared
+    @ObservedObject private var health = ShortcutHealthModel.shared
     /// Pauses the live hot key while recording.
     let onRecordingChanged: (Bool) -> Void
 
@@ -41,6 +42,9 @@ struct ShortcutPane: View {
                     )
                     .frame(width: 210)
                 }
+                if let problem = health.shownMain {
+                    ShortcutProblemNote(problem: problem)
+                }
             } footer: {
                 Text("Click, then press a key with modifiers for a combo like ⌥Space, hold two or more modifiers and let go for a chord, or tap one modifier twice for a double-tap. Key combos need no permissions; chords and double-taps need Accessibility and Input Monitoring.")
             }
@@ -56,6 +60,9 @@ struct ShortcutPane: View {
                             onRecordingChanged: onRecordingChanged
                         )
                         .frame(width: 210)
+                    }
+                    if let problem = health.shownScreenshot {
+                        ShortcutProblemNote(problem: problem)
                     }
                 }
             } header: {
