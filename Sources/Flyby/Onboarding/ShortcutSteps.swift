@@ -1,87 +1,42 @@
 import SwiftUI
 
-// The second half: the shortcut that summons Flyby, a real try of it, and
-// the send-off.
-
-// MARK: - Shortcut
-
-struct ShortcutStep: View {
-    @ObservedObject var settings: AppSettings
-    /// Pauses the live hotkey while the recorder is armed.
-    let onRecordingChanged: (Bool) -> Void
-
-    var body: some View {
-        VStack(spacing: 0) {
-            StepHeader(
-                title: "Summon Flyby from anywhere",
-                subtitle: settings.shortcut.explanation
-            )
-
-            // A new shortcut is a new set of keys: they swap rather than
-            // re-label, and the demonstration starts over for the new shape.
-            ZStack {
-                KeyCapsView(shortcut: settings.shortcut, mode: .demonstrate)
-                    .id(settings.shortcut.displayString)
-                    .transition(SoftSwapTransition())
-            }
-            .frame(height: 96)
-            .reveal(.content, blurs: false)
-            .padding(.top, 30)
-
-            HStack(spacing: 12) {
-                Text("Shortcut")
-                    .font(.system(size: 13, weight: .medium))
-                    .foregroundStyle(.secondary)
-                ShortcutRecorder(
-                    shortcut: settings.shortcutBinding,
-                    conflict: { settings.conflict(forShortcut: $0) },
-                    onRecordingChanged: onRecordingChanged
-                )
-                    .frame(width: 260)
-            }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 10)
-            .paneGlass(RoundedRectangle(cornerRadius: 18, style: .continuous))
-            .reveal(.controls, blurs: false)
-            .padding(.top, 30)
-
-            StepFootnote(footnote)
-                .id(footnote)
-                .transition(SoftSwapTransition())
-                .reveal(.footnote)
-                .padding(.top, 14)
-        }
-        .animation(.smooth(duration: 0.4), value: settings.shortcut)
-    }
-
-    private var footnote: String {
-        "Hold modifiers and press a key — no special permission needed."
-    }
-}
+// The second half: the shortcut that summons Flyby, tried for real, and the
+// send-off.
 
 // MARK: - Practice
 
 /// Proof it all works: the user fires the real shortcut, and Flyby appears.
+/// The shortcut, tried for real. Pressing it here only counts as practice —
+/// Flyby doesn't open until setup is done — and the keys light up when it
+/// lands. The recorder is a click away for anyone who wants other keys, and
+/// out on its own when the shortcut is taken by another app.
 struct PracticeStep: View {
-    let shortcut: Shortcut
+    @ObservedObject var settings: AppSettings
     let succeeded: Bool
+    /// Pauses the live hot keys while the recorder is armed.
+    let onRecordingChanged: (Bool) -> Void
 
+    @ObservedObject private var health = ShortcutHealthModel.shared
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     /// Trails `succeeded` by a beat, so the keys get their flash before the
     /// check takes their place.
     @State private var showsCheck = false
+    @State private var changing = false
+
+    private var shortcut: Shortcut { settings.shortcut }
 
     var body: some View {
         VStack(spacing: 0) {
             StepHeader(
-                title: succeeded ? "You've got it!" : "Try it now",
+                title: succeeded ? "You've got it!" : "Summon Flyby from anywhere",
                 subtitle: succeeded
-                    ? "That's the whole trick. Press Esc to put Flyby away."
-                    : shortcut.explanation
+                    ? "Once you're set up, that opens Flyby over whatever you're doing."
+                    : "Press \(shortcut.displayString) to try it."
             )
 
             ZStack {
                 KeyCapsView(shortcut: shortcut, mode: succeeded ? .celebrating : .waiting)
+                    .id(shortcut.displayString)
                     .opacity(showsCheck ? 0 : 1)
                     .blur(radius: showsCheck && !reduceMotion ? 14 : 0)
                     .scaleEffect(showsCheck && !reduceMotion ? 0.8 : 1)
@@ -102,12 +57,14 @@ struct PracticeStep: View {
 
             listening
                 .reveal(.controls)
-                .padding(.top, 26)
+                .padding(.top, 22)
 
-            StepFootnote("Flyby opens at the bottom of your screen, over whatever you're doing.")
+            change
                 .reveal(.footnote)
-                .padding(.top, 8)
+                .padding(.top, 16)
         }
+        .animation(.smooth(duration: 0.4), value: shortcut)
+        .animation(.smooth(duration: 0.3), value: changing)
         .task(id: succeeded) {
             guard succeeded else {
                 showsCheck = false
@@ -126,6 +83,42 @@ struct PracticeStep: View {
             .symbolEffect(.variableColor.iterative, isActive: !succeeded && !reduceMotion)
             .opacity(succeeded ? 0 : 1)
             .animation(.smooth(duration: 0.3), value: succeeded)
+    }
+
+    /// Other keys, if the user wants them — or needs them, when another app
+    /// has these.
+    @ViewBuilder
+    private var change: some View {
+        if changing || health.main != nil {
+            VStack(spacing: 10) {
+                HStack(spacing: 12) {
+                    Text("Shortcut")
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundStyle(.secondary)
+                    ShortcutRecorder(
+                        shortcut: settings.shortcutBinding,
+                        conflict: { settings.conflict(forShortcut: $0) },
+                        onRecordingChanged: onRecordingChanged
+                    )
+                    .frame(width: 260)
+                }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 10)
+                .paneGlass(RoundedRectangle(cornerRadius: 18, style: .continuous))
+
+                if let reason = health.main {
+                    ShortcutProblemNote(reason: reason)
+                        .frame(width: 420)
+                }
+            }
+            .transition(SoftSwapTransition())
+        } else {
+            Button("Use a different shortcut") { changing = true }
+                .buttonStyle(.plain)
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(.secondary)
+                .transition(SoftSwapTransition())
+        }
     }
 }
 

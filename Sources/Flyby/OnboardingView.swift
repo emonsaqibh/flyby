@@ -3,8 +3,10 @@ import AppKit
 import Combine
 
 /// The first-launch walkthrough: greet, pick a provider (and connect
-/// Google, if that provider is AI Mode), record the shortcut, prove it works
-/// by actually firing it once, then meet the screenshot shortcut.
+/// Google, if that provider is AI Mode), try the shortcut — changing it if
+/// need be — then the screenshot shortcut and its Screen Recording grant.
+/// Flyby can't be used until it's done, and it resumes on the step the user
+/// was on: macOS's "Quit & Reopen" after a grant lands back where it was.
 ///
 /// As **What's new**, for an install that finished the walkthrough before
 /// something worth showing arrived, it's just the new step: the screenshot
@@ -17,7 +19,7 @@ import Combine
 struct OnboardingView: View {
     /// In the order they're shown. Which ones are shown is `visibleSteps`.
     enum Step: Int, CaseIterable {
-        case welcome, provider, google, hotkey, practice, screenshot, done
+        case welcome, provider, google, practice, screenshot, done
     }
 
     enum Mode {
@@ -44,6 +46,11 @@ struct OnboardingView: View {
     /// The footer and progress arrive after the welcome does, so the first
     /// thing on screen is the product, not the controls.
     @State private var chromeShown = false
+    /// Screen Recording, for the screenshot step's button label: until it's
+    /// allowed, going on is skipping it.
+    @State private var screenCaptureAllowed = ScreenCapture.hasPermission
+
+    private let permissionPoll = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
 
     init(mode: Mode = .walkthrough, onRecordingChanged: @escaping (Bool) -> Void, onFinished: @escaping () -> Void) {
         self.mode = mode
@@ -52,7 +59,12 @@ struct OnboardingView: View {
         let first: Step
         switch mode {
         case .walkthrough:
-            first = .welcome
+            // Where they left off — quitting for a permission, closing the
+            // window — or the start.
+            first = AppSettings.shared.onboardingStep
+                .flatMap { saved in Step.allCases.first { "\($0)" == saved } }
+                .flatMap { $0 == .google && AppSettings.shared.provider != .aiMode ? nil : $0 }
+                ?? .welcome
         case .whatsNew:
             first = .screenshot
         }
@@ -94,6 +106,14 @@ struct OnboardingView: View {
         .onAppear {
             withAnimation(.smooth(duration: 0.6).delay(step == .welcome ? 1.0 : 0.3)) { chromeShown = true }
         }
+        .onChange(of: step, initial: true) { _, now in
+            if mode == .walkthrough { AppSettings.shared.onboardingStep = "\(now)" }
+        }
+        .onReceive(permissionPoll) { _ in
+            guard step == .screenshot else { return }
+            let allowed = ScreenCapture.hasPermission
+            if allowed != screenCaptureAllowed { screenCaptureAllowed = allowed }
+        }
         .task { await autoplayIfAsked() }
         .task(id: step) { await debugStepHooks() }
     }
@@ -109,10 +129,8 @@ struct OnboardingView: View {
             ProviderStep(settings: settings)
         case .google:
             GoogleStep()
-        case .hotkey:
-            ShortcutStep(settings: settings, onRecordingChanged: onRecordingChanged)
         case .practice:
-            PracticeStep(shortcut: settings.shortcut, succeeded: practiceSucceeded)
+            PracticeStep(settings: settings, succeeded: practiceSucceeded, onRecordingChanged: onRecordingChanged)
         case .screenshot:
             ScreenshotStep(settings: settings, onRecordingChanged: onRecordingChanged, isNew: mode == .whatsNew)
         case .done:
@@ -127,7 +145,6 @@ struct OnboardingView: View {
         case .welcome:       return 0
         case .provider:      return 1.4
         case .google:        return 2.1
-        case .hotkey:        return 3.0
         case .practice:      return 4.5
         case .screenshot:    return 5.1
         case .done:          return 5.8
@@ -214,6 +231,8 @@ struct OnboardingView: View {
         case .welcome:                            return "Get Started"
         case .google where !google.isConnected:   return "Skip for Now"
         case .practice where !practiceSucceeded:  return "Skip"
+        case .screenshot where settings.screenshotShortcut != nil && !screenCaptureAllowed:
+                                                  return "Skip for Now"
         case .done:                               return "Start Using Flyby"
         case _ where step == visibleSteps.last:   return "Done"
         default:                                  return "Continue"
@@ -227,7 +246,7 @@ struct OnboardingView: View {
         if mode == .whatsNew { return [.screenshot] }
         var steps: [Step] = [.welcome, .provider]
         if settings.provider == .aiMode { steps.append(.google) }
-        steps.append(contentsOf: [.hotkey, .practice, .screenshot, .done])
+        steps.append(contentsOf: [.practice, .screenshot, .done])
         return steps
     }
 

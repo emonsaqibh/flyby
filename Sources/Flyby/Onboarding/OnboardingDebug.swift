@@ -9,7 +9,7 @@ import SwiftUI
 ///         -FlybyDebugOnboardingStep practice -FlybyDebugPracticeSuccess YES
 ///
 /// - `-FlybyDebugOnboardingStep <step>`: start on `welcome`, `provider`,
-///   `google`, `hotkey`, `practice`, `screenshot` or `done`.
+///   `google`, `practice`, `screenshot` or `done`.
 /// - `-FlybyDebugOpen whatsnew`: What's new, as an update shows it.
 /// - `-FlybyDebugOnboardingAutoplay <seconds>`: move on by itself every so
 ///   often, back to the start after the last step, to watch transitions.

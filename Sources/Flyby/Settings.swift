@@ -181,10 +181,18 @@ final class AppSettings: ObservableObject {
         didSet { scheduleKeychainWrite() }
     }
 
-    /// Gates the first-launch flow. An install that already recorded a
-    /// shortcut predates onboarding and shouldn't be walked through it.
+    /// Gates the first-launch flow — and, until it's done, Flyby itself. An
+    /// install that already recorded a shortcut predates onboarding and
+    /// shouldn't be walked through it.
     @Published var hasCompletedOnboarding: Bool {
         didSet { defaults.set(hasCompletedOnboarding, forKey: "hasCompletedOnboarding") }
+    }
+    /// The walkthrough step the user was on, so a quit — macOS's own "Quit &
+    /// Reopen" after a permission, say — picks up where they left off.
+    /// `nil` before it starts and once it's done.
+    var onboardingStep: String? {
+        get { defaults.string(forKey: "onboardingStep") }
+        set { defaults.set(newValue, forKey: "onboardingStep") }
     }
 
     private var pendingKeychainValue: String?
@@ -258,6 +266,7 @@ final class AppSettings: ObservableObject {
         loginItemError = nil
         geminiKey = ""
         hasCompletedOnboarding = false
+        onboardingStep = nil
         // Not left to the debounce: "reset" should mean the key is gone now.
         flushPendingWrites()
     }

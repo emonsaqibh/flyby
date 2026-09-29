@@ -35,6 +35,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var isShowingWhatsNew = false
     private var statusItem: NSStatusItem?
     private var shortcutProblemMenuItem: NSMenuItem?
+    private var openMenuItem: NSMenuItem?
+    private var settingsMenuItem: NSMenuItem?
+    private var appSettingsMenuItem: NSMenuItem?
     private var updateMenuItem: NSMenuItem?
     private var outsideClickMonitor: Any?
     private var keyMonitor: Any?
@@ -77,6 +80,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         _ = panel
         installStatusItem()
         installMenu()
+        observeSetupState()
         observeDismissRequests()
         observeOnboardingRequests()
         observeInstaller()
@@ -396,8 +400,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func handleOpenRequest() {
         guard isRunning else { return }
         if let onboardingWindow {
-            NSApp.activate()
-            onboardingWindow.makeKeyAndOrderFront(nil)
+            bringToFront(onboardingWindow)
         } else {
             showFlyby()
         }
@@ -442,10 +445,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
         hotKeys.onTrigger = { [weak self] in
-            // The onboarding practice step listens for this as proof the
-            // pipeline works end to end.
+            // The practice step listens for this as proof the shortcut works
+            // end to end. While the walkthrough (or What's new) is up, that's
+            // all a press is: Flyby doesn't open over it.
             NotificationCenter.default.post(name: .flybyDidTriggerShortcut, object: nil)
-            self?.toggleFlyby()
+            guard let self else { return }
+            if let onboardingWindow = self.onboardingWindow {
+                self.bringToFront(onboardingWindow)
+                return
+            }
+            self.toggleFlyby()
         }
         // A combo another app owns is said out loud when the user has just
         // chosen it — mid-onboarding too — and at launch only by the menu bar.
@@ -586,6 +595,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// the display as it's taken.
     private func captureScreen() {
         guard isRunning, !isCapturing else { return }
+        // The walkthrough or What's new is up: a practice run, nothing more.
+        if onboardingWindow != nil {
+            practiceScreenshot()
+            return
+        }
+        // Not set up yet: back to where setup left off.
+        guard AppSettings.shared.hasCompletedOnboarding else {
+            showOnboarding()
+            return
+        }
         // The app the user was in: whatever's in front, or, with Flyby open
         // (and so in front), the one Flyby came from.
         let frontmost = NSWorkspace.shared.frontmostApplication
@@ -613,6 +632,32 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             } catch {
                 self.reportCaptureProblem(.failed(error.localizedDescription))
             }
+        }
+    }
+
+    /// The screenshot shortcut during setup: the wave crosses the screen if
+    /// Flyby can see it, and the screenshot step hears that it worked.
+    /// Nothing is attached and Flyby doesn't open. The walkthrough window is
+    /// lifted over the wave, which would otherwise hide it for a second.
+    private func practiceScreenshot() {
+        guard ScreenCapture.hasPermission else {
+            ScreenCapture.requestPermission()
+            return
+        }
+        isCapturing = true
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            defer { self.isCapturing = false }
+            guard let capture = try? await ScreenCapture.capture(windowOf: nil) else { return }
+            let window = self.onboardingWindow
+            let resting = window?.level ?? .normal
+            window?.level = NSWindow.Level(rawValue: NSWindow.Level.screenSaver.rawValue + 1)
+            CaptureWave.play(
+                over: capture.screen, showing: capture.display,
+                from: FlybyPanel.barCenter(on: capture.screen), focus: capture.windowFrame,
+                level: .screenSaver
+            ) { window?.level = resting }
+            NotificationCenter.default.post(name: .flybyDidTriggerScreenshotShortcut, object: nil)
         }
     }
 
@@ -662,6 +707,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func showFlyby() {
         guard isRunning else { return }
+        // Flyby is for after setup: until then, every way in leads back to
+        // the walkthrough, on the step it was left on.
+        guard AppSettings.shared.hasCompletedOnboarding else {
+            showOnboarding()
+            return
+        }
         presentationGeneration += 1
         let generation = presentationGeneration
         // Folded up first, so emptying the panel of a close still in progress
@@ -833,9 +884,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let updateItem = NSMenuItem(title: "", action: #selector(showAvailableUpdate), keyEquivalent: "")
         updateItem.isHidden = true
         menu.addItem(updateItem)
-        menu.addItem(withTitle: "Open \(BuildFlavor.appName)", action: #selector(openFromMenu), keyEquivalent: "")
+        openMenuItem = menu.addItem(withTitle: "Open \(BuildFlavor.appName)", action: #selector(openFromMenu), keyEquivalent: "")
         menu.addItem(.separator())
-        menu.addItem(withTitle: "Settings…", action: #selector(openSettings), keyEquivalent: ",")
+        settingsMenuItem = menu.addItem(withTitle: "Settings…", action: #selector(openSettings), keyEquivalent: ",")
         menu.addItem(withTitle: "Check for Updates…", action: #selector(checkForUpdates), keyEquivalent: "")
         menu.addItem(.separator())
         menu.addItem(withTitle: "Quit \(BuildFlavor.appName)", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
@@ -921,7 +972,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         let appItem = NSMenuItem()
         let appMenu = NSMenu()
-        appMenu.addItem(withTitle: "Settings…", action: #selector(openSettings), keyEquivalent: ",").target = self
+        appSettingsMenuItem = appMenu.addItem(withTitle: "Settings…", action: #selector(openSettings), keyEquivalent: ",")
+        appSettingsMenuItem?.target = self
         appMenu.addItem(.separator())
         appMenu.addItem(withTitle: "Quit Flyby", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         appItem.submenu = appMenu
@@ -941,6 +993,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func openFromMenu() {
         showFlyby()
+    }
+
+    /// Before setup is done the menu says what's left to do, and Settings
+    /// isn't offered: Flyby is for after the walkthrough.
+    private func observeSetupState() {
+        AppSettings.shared.$hasCompletedOnboarding
+            .receive(on: RunLoop.main)
+            .sink { [weak self] _ in self?.refreshSetupMenus() }
+            .store(in: &cancellables)
+    }
+
+    private func refreshSetupMenus() {
+        let done = AppSettings.shared.hasCompletedOnboarding
+        let name = BuildFlavor.appName
+        openMenuItem?.title = done ? "Open \(name)" : "Finish Setting Up \(name)…"
+        settingsMenuItem?.isHidden = !done
+        appSettingsMenuItem?.isHidden = !done
     }
 
     // MARK: - Onboarding
@@ -989,8 +1058,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func showOnboarding() {
         if let onboardingWindow {
-            NSApp.activate()
-            onboardingWindow.makeKeyAndOrderFront(nil)
+            bringToFront(onboardingWindow)
             return
         }
 
@@ -1002,17 +1070,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         window.center()
         window.delegate = self
         onboardingWindow = window
+        bringToFront(window)
+    }
 
+    /// In front of everything, whichever app was — a menu-bar app's windows
+    /// otherwise open behind the one the user is in.
+    private func bringToFront(_ window: NSWindow) {
         NSApp.activate()
         window.makeKeyAndOrderFront(nil)
+        window.orderFrontRegardless()
     }
 
     /// What's new, once, for an install that finished the walkthrough before
     /// it: the same window and steps, just the new ones.
     private func showWhatsNew() {
         if let onboardingWindow {
-            NSApp.activate()
-            onboardingWindow.makeKeyAndOrderFront(nil)
+            bringToFront(onboardingWindow)
             return
         }
         let window = OnboardingView.makeWindow(
@@ -1025,15 +1098,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         window.delegate = self
         onboardingWindow = window
         isShowingWhatsNew = true
-
-        NSApp.activate()
-        window.makeKeyAndOrderFront(nil)
+        bringToFront(window)
     }
 
     /// The walkthrough or What's new, done: either way, what's new has been
     /// seen.
     private func finishOnboarding() {
         AppSettings.shared.hasCompletedOnboarding = true
+        AppSettings.shared.onboardingStep = nil
         AppSettings.shared.whatsNewSeen = AppSettings.currentWhatsNew
         isShowingWhatsNew = false
         onboardingWindow?.orderOut(nil)
@@ -1046,6 +1118,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc private func openSettings() {
+        // Settings is for after setup too.
+        guard AppSettings.shared.hasCompletedOnboarding else {
+            showOnboarding()
+            return
+        }
         if let settingsWindow {
             NSApp.activate()
             settingsWindow.makeKeyAndOrderFront(nil)
