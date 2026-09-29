@@ -69,7 +69,7 @@ struct ShortcutProblemNote: View {
         switch problem {
         case .needsKeyboardAccess:
             let name = BuildFlavor.appName
-            return "Double-taps and chords need \(name) turned on under both Accessibility and Input Monitoring. If it's already on there, remove it with − and add it again: macOS treats each update as a new app."
+            return "Double-taps and chords need \(name) turned on under both Accessibility and Input Monitoring. If it's already on there, remove it with − and add it again: that entry is for an earlier build macOS no longer matches."
         case .unavailable(let reason):
             return reason
         }

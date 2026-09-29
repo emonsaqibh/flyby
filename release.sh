@@ -36,6 +36,16 @@ if [[ -n "$(git status --porcelain)" && "${ALLOW_DIRTY:-0}" != 1 ]]; then
   exit 1
 fi
 
+# Every release signed the same way, or it's a new app to macOS and everyone
+# grants Screen Recording, Accessibility and Input Monitoring all over again:
+# with the release certificate (scripts/release-signing.sh, or its backup
+# imported), or a Developer ID. ALLOW_ADHOC=1 for a throwaway local build.
+if [[ -z "${SIGN_IDENTITY:-}" && "${ALLOW_ADHOC:-0}" != 1 ]] \
+   && ! security find-identity -v -p codesigning 2>/dev/null | grep -qF '"Flyby Release Signing"'; then
+  echo "✗ no \"Flyby Release Signing\" certificate on this Mac — run ./scripts/release-signing.sh (or import its .p12 backup), or set SIGN_IDENTITY" >&2
+  exit 1
+fi
+
 NOTARIZE=false
 if [[ -n "${NOTARY_PROFILE:-}" ]]; then
   [[ "${SIGN_IDENTITY:--}" != "-" ]] || { echo "✗ notarizing needs a Developer ID — set SIGN_IDENTITY" >&2; exit 1; }

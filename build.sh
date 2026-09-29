@@ -22,12 +22,14 @@
 # and their compiler plugin ships with Xcode, not the Command Line Tools — so
 # when xcode-select points at the CLT, Xcode is used for this build anyway.
 #
-# Signing is ad-hoc unless SIGN_IDENTITY names a Developer ID, which also turns on
-# the hardened runtime and a secure timestamp (both required for notarization,
-# which release.sh does). A dev build is signed with this Mac's local
-# certificate when it has one (scripts/dev-signing.sh): an ad-hoc signature
-# changes with every build, and macOS drops Flyby Dev's Screen Recording,
-# Accessibility and Full Disk Access grants each time it does.
+# Signing: macOS keys Flyby's privacy grants (Screen Recording, Accessibility,
+# Input Monitoring) to its signature, and an ad-hoc signature changes with every
+# build — so a build signed that way loses them all, on every rebuild and every
+# update. So each flavor is signed with this Mac's certificate for it when there
+# is one: "Flyby Dev Local Signing" (scripts/dev-signing.sh) and "Flyby Release
+# Signing" (scripts/release-signing.sh). Otherwise ad-hoc — CI has neither.
+# SIGN_IDENTITY overrides; a Developer ID also turns on the hardened runtime and
+# a secure timestamp (both required for notarization, which release.sh does).
 set -euo pipefail
 cd "$(dirname "$0")"
 
@@ -57,6 +59,14 @@ BASE_ID="com.fringecore.flyby"
 REQUESTED_IDENTITY="${SIGN_IDENTITY:-}"
 SIGN_IDENTITY="${SIGN_IDENTITY:--}"
 DEV_IDENTITY="Flyby Dev Local Signing"
+RELEASE_IDENTITY="Flyby Release Signing"
+
+# This Mac's certificate for the flavor, unless SIGN_IDENTITY picked one.
+use_local_identity() {
+  if [[ -z "$REQUESTED_IDENTITY" ]] && security find-identity -v -p codesigning 2>/dev/null | grep -qF "\"$1\""; then
+    SIGN_IDENTITY="$1"
+  fi
+}
 PLIST_VERSION=$(/usr/libexec/PlistBuddy -c 'Print CFBundleShortVersionString' Resources/Info.plist)
 
 case "$FLAVOR" in
@@ -81,9 +91,7 @@ case "$FLAVOR" in
       case "$BRANCH" in ""|dev|main) ;; *) VERSION="$VERSION · ${BRANCH##*/}" ;; esac
     fi
     BUILD_NUMBER="$(date +%Y%m%d%H%M)"
-    if [[ -z "$REQUESTED_IDENTITY" ]] && security find-identity -v -p codesigning 2>/dev/null | grep -qF "\"$DEV_IDENTITY\""; then
-      SIGN_IDENTITY="$DEV_IDENTITY"
-    fi
+    use_local_identity "$DEV_IDENTITY"
     ;;
   release)
     CONF="${CONF:-release}"
@@ -94,6 +102,7 @@ case "$FLAVOR" in
     : "${VERSION:?FLAVOR=release needs VERSION — use ./release.sh <version>}"
     # Monotonic across releases, which is all CFBundleVersion has to be.
     BUILD_NUMBER="${BUILD_NUMBER:-$(date +%Y%m%d%H%M)}"
+    use_local_identity "$RELEASE_IDENTITY"
     ;;
   *) echo "✗ unknown FLAVOR '$FLAVOR' (dev|release)" >&2; exit 2 ;;
 esac
@@ -160,7 +169,9 @@ cp "$ICON" "$APP/Contents/Resources/AppIcon.icns"
 
 echo "› Signing ($SIGN_IDENTITY)…"
 sign_args=(--force --sign "$SIGN_IDENTITY" --identifier "$BUNDLE_ID")
-if [[ "$SIGN_IDENTITY" != "-" && "$SIGN_IDENTITY" != "$DEV_IDENTITY" ]]; then
+# Only a Developer ID is notarized; the local certificates aren't, and
+# Apple's timestamp service has no business with them.
+if [[ "$SIGN_IDENTITY" == "Developer ID Application:"* ]]; then
   sign_args+=(--options runtime --timestamp)
 fi
 codesign "${sign_args[@]}" "$APP"

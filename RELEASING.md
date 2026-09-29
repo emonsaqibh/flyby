@@ -71,26 +71,15 @@ merge it into `main` and release from `main`.
    in-app updater both depend on it. Needs the GitHub CLI (`brew install gh`,
    `gh auth login`).
 
-### Or let GitHub do it
+### Not on GitHub
 
-`.github/workflows/release.yml` does the same on a macOS 27 runner — tests,
-an Apple silicon release build, and the GitHub release with `Flyby.zip` attached
-(a pre-release for `-beta` versions). Notes come from
-`docs/releases/<version>.md` if it exists. Two ways to start it, neither
-needing a Mac:
-
-- **From the website:** Actions › **Release** › **Run workflow**, pick the
-  branch (normally `main`), type the version (`0.3.0-beta.1`), Run. It tags
-  that branch's latest commit `v0.3.0-beta.1`.
-- **From a terminal:** push a tag —
-
-  ```sh
-  git tag -a v0.3.0-beta.2 -m "Flyby 0.3.0-beta.2"
-  git push origin v0.3.0-beta.2
-  ```
-
-What you don't get this way is the local `releases/<version>/` snapshot and
-the install into `/Applications`; install it with the one-liner below.
+Releases are made on the Mac that has the release certificate (see Signing,
+below). `.github/workflows/release.yml` still runs on every `v*` tag, but only
+to check: on the tag `publish.sh` pushes it finds the release already there and
+stops, successfully; anywhere else — another tag, or Actions › Release › Run
+workflow — it refuses, because a build there would be ad-hoc and everyone would
+grant Flyby's permissions again. Its old build-and-publish steps are kept for
+if the certificate is ever given to it as a secret.
 
 People install or update with the one-liner from the README:
 
@@ -105,10 +94,27 @@ user the same command.
 
 ## Signing and notarization
 
-Releases are **ad-hoc signed** until there's a Developer ID. That's why the
-installer is a curl script: a zip downloaded in a browser is quarantined, and
-macOS 15+ won't open an un-notarized quarantined app without a trip to System
-Settings.
+macOS keys Flyby's privacy grants — Screen Recording, Accessibility, Input
+Monitoring — to its code signature. An ad-hoc signature is different on every
+build, so up to 0.5.1 every update was a new app to macOS and people granted
+everything again. From 0.5.2, releases are signed with a self-signed
+**"Flyby Release Signing"** certificate: each release's signature names that
+certificate, the next one signed with it matches, and the grants stay. Nobody
+has to trust the certificate for that, and the installer's `codesign --verify`
+accepts it.
+
+- **Once, on the Mac releases are made on:** `./scripts/release-signing.sh`
+  (one password prompt, to trust it for code signing there). `build.sh` signs
+  release builds with it from then on, and `release.sh` refuses to release
+  without it — `ALLOW_ADHOC=1` for a throwaway local build.
+- **Back it up**: Keychain Access › login › My Certificates ›
+  "Flyby Release Signing" › File › Export Items… as a password-protected
+  `.p12`. Releasing from another Mac means importing that. Lose it and the
+  next release is a new app to macOS again: everyone grants once more.
+
+It's still not notarized. That's why the installer is a curl script: a zip
+downloaded in a browser is quarantined, and macOS 15+ won't open an
+un-notarized quarantined app without a trip to System Settings.
 
 Once you have a Developer ID certificate:
 

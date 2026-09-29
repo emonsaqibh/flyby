@@ -729,19 +729,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    /// Said over the input, in Flyby — opened for it if need be. The first
-    /// time, macOS's own prompt comes too; after that only System Settings
-    /// can change the answer.
+    /// Said over the input, in Flyby — opened for it if need be — with
+    /// macOS asked as well: it prompts whenever Flyby isn't in its list at
+    /// all, and says nothing when an entry's there, on or off, or stale from
+    /// an earlier build that no longer matches.
     private func reportCaptureProblem(_ failure: ScreenCapture.Failure) {
         openFlybyIfClosed()
         switch failure {
         case .notAllowed:
-            if AppSettings.shared.hasCapturedScreen {
-                controller.captureNotice = .permissionLost
-            } else {
-                ScreenCapture.requestPermission()
-                controller.captureNotice = .needsPermission
-            }
+            ScreenCapture.requestPermission()
+            controller.captureNotice = AppSettings.shared.hasCapturedScreen ? .permissionLost : .needsPermission
         case .failed(let message):
             controller.captureNotice = .failed(message)
         }

@@ -51,7 +51,9 @@ next launch. Flyby notices and offers to move itself; Settings › General keeps
 
 **0.5.1** says when a double-tap or chord screenshot shortcut is waiting for
 Accessibility or Input Monitoring, and how to fix it
-([notes](docs/releases/0.5.1.md)).
+([notes](docs/releases/0.5.1.md)). **0.5.2** keeps Flyby's permissions across
+updates: releases are signed with the same certificate every time
+([notes](docs/releases/0.5.2.md)).
 
 Full notes: [docs/releases/0.5.0.md](docs/releases/0.5.0.md).
 
@@ -154,7 +156,9 @@ second; after Input Monitoring macOS may ask to reopen it. Screenshots need
 macOS keys those grants to the app's signature. An ad-hoc signature changes on
 every build, so run `./scripts/dev-signing.sh` once: it makes a local signing
 certificate (one password prompt, to trust it for code signing) that
-`build.sh` then signs Flyby Dev with, and the grants survive rebuilds. Without
+`build.sh` then signs Flyby Dev with, and the grants survive rebuilds.
+Releases get the same treatment with their own certificate, so people keep
+their grants across updates — see Signing in [RELEASING.md](RELEASING.md). Without
 it, remove **Flyby Dev** from each list with the − button after a rebuild and
 add it back. Key-combo shortcuts need none of this.
 

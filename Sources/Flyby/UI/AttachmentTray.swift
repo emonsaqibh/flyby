@@ -103,7 +103,7 @@ private struct NoticeCard: View {
     private var title: String {
         switch notice {
         case .needsPermission: return "Let \(name) see your screen"
-        case .permissionLost:  return "macOS forgot \(name)'s screen permission"
+        case .permissionLost:  return "macOS doesn't recognise this \(name)"
         case .failed:          return "No screenshot"
         }
     }
@@ -113,9 +113,9 @@ private struct NoticeCard: View {
         case .needsPermission:
             return "Turn on \(name) in System Settings › Privacy & Security › Screen & System Audio Recording, then try again. macOS may ask to reopen \(name) first."
         case .permissionLost:
-            // Ad-hoc signed: every build is a new app to macOS's privacy
-            // database, and the old entry no longer matches.
-            return "After an update, macOS sees \(name) as a new app. In Screen & System Audio Recording, remove \(name) with the − button, add it again, then try again."
+            // An entry left from a build signed differently (ad-hoc, up to
+            // 0.5.1) looks on, and no longer matches.
+            return "Screenshots worked before, so an entry for \(name) is probably there but for an earlier build. In Screen & System Audio Recording, remove \(name) with the − button, add it again, then try again."
         case .failed(let message):
             return message
         }
