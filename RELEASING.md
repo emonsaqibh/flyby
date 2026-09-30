@@ -9,7 +9,7 @@ people install, and each version of it is built once and frozen.
 | App | `build/Flyby Dev.app`, and every build kept in `dev-builds/<version>/` | `releases/<version>/Flyby.app` → `/Applications/Flyby.app` |
 | Bundle ID | `com.fringecore.flyby.dev` | `com.fringecore.flyby` |
 | Version | from git: `0.3.0-dev.14 · pill` | exactly what you pass: `0.3.0`, `0.4.0-beta.1` |
-| Architectures | arm64 | arm64 — macOS 27 doesn't run on Intel Macs |
+| Architectures | arm64 | arm64 — Apple silicon only, macOS 15 and later |
 | Icon / badge | amber icon, **DEV** badge | blue icon, no badge |
 | Updates | off — rebuild instead | checks GitHub, offers the install command |
 

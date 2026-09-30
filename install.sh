@@ -92,8 +92,8 @@ APP="$TMP/unzipped/$APP_NAME.app"
 codesign --verify --deep --strict "$APP" 2>/dev/null || fail "the downloaded app failed its signature check"
 [[ "$(/usr/libexec/PlistBuddy -c 'Print CFBundleIdentifier' "$APP/Contents/Info.plist")" == "$BUNDLE_ID" ]] \
   || fail "the download isn't Flyby ($BUNDLE_ID)"
-# Flyby 0.4 and later need macOS 27 (so Apple silicon); earlier releases run
-# from macOS 14. Go by what the download itself asks for, so a version named
+# Flyby 0.7 and later need macOS 15 on Apple silicon, 0.4–0.6 macOS 27, and
+# earlier releases run from macOS 14. Go by what the download itself asks for, so a version named
 # on the command line is checked too, and a working copy is never replaced by
 # one that can't open here.
 needs="$(/usr/libexec/PlistBuddy -c 'Print LSMinimumSystemVersion' "$APP/Contents/Info.plist" 2>/dev/null || echo 0)"

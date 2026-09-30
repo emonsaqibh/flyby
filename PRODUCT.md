@@ -1,7 +1,7 @@
 # Flyby — Product Source of Truth
 
 **Status:** v0.3.0 (pre-release; dev/release builds, curl installer + in-app update checks; ad-hoc signed, not yet notarized)
-**Platform:** macOS 27 and later, Apple silicon (0.3 and earlier: macOS 14 and later)
+**Platform:** macOS 15 and later, Apple silicon — Liquid Glass from macOS 26, Apple Intelligence from macOS 27 (0.4–0.6: macOS 27; 0.3 and earlier: macOS 14)
 **Bundle ID:** `com.fringecore.flyby` (release build, "Flyby") · `com.fringecore.flyby.dev` (dev build, "Flyby Dev")
 **Maker:** fringecore
 **Name note:** "Flyby" is the working product name (was "Quick Search"; the Swift package and modules are now `Flyby` / `FlybyCore`, though a few internal identifiers still say `quickSearch`)
@@ -526,7 +526,7 @@ included).
   (`… | bash -s -- --beta` includes betas; `… | bash -s -- 0.3.0` pins a
   version). It picks the newest GitHub release that carries `Flyby.zip`,
   requires macOS 14+ and refuses a download that needs a newer macOS than the
-  Mac has (0.4 and later need macOS 27), verifies the code signature and the bundle ID, clears the
+  Mac has (0.4–0.6 need macOS 27, 0.7 and later macOS 15), verifies the code signature and the bundle ID, clears the
   quarantine flag, quits a running copy, installs into `/Applications` (or
   `~/Applications`), refuses to overwrite an app that isn't Flyby, and opens it.
 - A script rather than a download link because releases aren't notarized yet,
@@ -763,8 +763,8 @@ you want no third party at all, use Browser mode with DuckDuckGo.
 
 | | |
 | --- | --- |
-| **Platform** | macOS 27.0 or later |
-| **Architecture** | Apple silicon (arm64) only — macOS 27 doesn't run on Intel Macs; CI checks the binary with `lipo`. |
+| **Platform** | macOS 15.0 or later. Liquid Glass on macOS 26+ (a frosted fallback before that); Apple Intelligence on macOS 27+ (listed but disabled before that). Built with the macOS 27 SDK; FoundationModels is weak-linked. |
+| **Architecture** | Apple silicon (arm64) only; CI checks the binary with `lipo`, its `minos 15.0`, and that FoundationModels is weak-linked. |
 | **Language / stack** | Swift 6.4 toolchain (`swift-tools-version: 6.4`, Xcode 27 — the Command Line Tools lack the SwiftUI macro plugin macOS 27 needs); `FlybyCore` in Swift 6 language mode (strict concurrency), the `Flyby` app target in Swift 5 mode. SwiftUI + AppKit, FoundationModels, WebKit, Combine, Carbon HIToolbox, ServiceManagement, Security, and the system SQLite3 and CommonCrypto libraries (for reading browser cookie stores) |
 | **Modules** | `FlybyCore` — Foundation-only logic, unit-tested; `Flyby` — the app; `FlybyCoreTests` |
 | **Dependencies** | **Zero.** No third-party packages. |
