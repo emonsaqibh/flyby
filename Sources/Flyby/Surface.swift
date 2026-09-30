@@ -58,9 +58,12 @@ struct Surface<S: InsettableShape>: ViewModifier {
         } else {
             smokeAndRim(content)
                 .background {
+                    // The smoke tint is glass's, keeping everything dark over
+                    // a white window; controls read a shade lighter.
                     BehindWindowBlur()
+                        .overlay { Palette.smokeTint }
+                        .overlay { Color.white.opacity(style == .control ? 0.08 : 0) }
                         .clipShape(shape)
-                        .overlay { shape.fill(Color.white.opacity(style == .smoke ? 0 : 0.08)) }
                         .opacity(isVisible ? 1 : 0)
                 }
         }
