@@ -215,7 +215,12 @@ final class AppSettings: ObservableObject {
         if defaults.object(forKey: "hasCompletedOnboarding") != nil {
             hasCompletedOnboarding = defaults.bool(forKey: "hasCompletedOnboarding")
         } else {
+            // Not someone partway through the walkthrough, though: changing
+            // the shortcut in it saves one, and a relaunch then (Screen
+            // Recording's Quit & Reopen) would take them for a user from
+            // before onboarding and skip the rest of it.
             hasCompletedOnboarding = defaults.dictionary(forKey: "shortcut") != nil
+                && defaults.string(forKey: "onboardingStep") == nil
         }
         // A double-tap or chord saved before 0.6 is gone: the default takes
         // its place, saved, and said once (`replacedRetiredShortcut`).
