@@ -15,6 +15,8 @@ enum SurfaceStyle {
 
 /// Liquid Glass, or opaque dark fills in the same shapes under Reduce
 /// Transparency — which asks for exactly that, where glass would only frost.
+/// Before macOS 26, which has no Liquid Glass, the desktop behind is blurred
+/// instead, under the same smoke and rim.
 ///
 /// Glass draws its own edge highlight, shadow and shaping, and follows the
 /// user's clear-to-tinted slider in System Settings without us doing
@@ -50,22 +52,35 @@ struct Surface<S: InsettableShape>: ViewModifier {
                         .opacity(isVisible ? 1 : 0)
                         .allowsHitTesting(false)
                 }
-        } else {
-            content
-                .background {
-                    shape.fill(Palette.smoke).opacity(smoke)
-                }
-                .overlay {
-                    shape.strokeBorder(Palette.rim, lineWidth: contrast == .increased ? 1.5 : 0.75)
-                        .opacity(smoke)
-                        .allowsHitTesting(false)
-                }
+        } else if #available(macOS 26.0, *) {
+            smokeAndRim(content)
                 .glassEffect(glass, in: shape)
+        } else {
+            smokeAndRim(content)
+                .background {
+                    BehindWindowBlur()
+                        .clipShape(shape)
+                        .overlay { shape.fill(Color.white.opacity(style == .smoke ? 0 : 0.08)) }
+                        .opacity(isVisible ? 1 : 0)
+                }
         }
+    }
+
+    private func smokeAndRim(_ content: Content) -> some View {
+        content
+            .background {
+                shape.fill(Palette.smoke).opacity(smoke)
+            }
+            .overlay {
+                shape.strokeBorder(Palette.rim, lineWidth: contrast == .increased ? 1.5 : 0.75)
+                    .opacity(smoke)
+                    .allowsHitTesting(false)
+            }
     }
 
     private var smoke: Double { style == .smoke && isVisible ? 1 : 0 }
 
+    @available(macOS 26.0, *)
     private var glass: Glass {
         guard isVisible else { return .identity }
         let glass: Glass = style == .smoke ? .regular.tint(Palette.smokeTint) : .regular
@@ -123,12 +138,30 @@ extension View {
     }
 
     /// Glass buttons. Prominent is for the one action a view is asking for.
+    /// Bordered ones before macOS 26.
     @ViewBuilder
     func flybyGlassButton(prominent: Bool = false) -> some View {
-        if prominent {
-            buttonStyle(.glassProminent)
+        if #available(macOS 26.0, *) {
+            if prominent {
+                buttonStyle(.glassProminent)
+            } else {
+                buttonStyle(.glass)
+            }
+        } else if prominent {
+            buttonStyle(.borderedProminent)
         } else {
-            buttonStyle(.glass)
+            buttonStyle(.bordered)
+        }
+    }
+
+    /// Keeps a glass shape's identity across a change of form. Nothing to
+    /// keep before macOS 26, where the shape isn't glass.
+    @ViewBuilder
+    func flybyGlassEffectID<ID: Hashable & Sendable>(_ id: ID, in namespace: Namespace.ID) -> some View {
+        if #available(macOS 26.0, *) {
+            glassEffectID(id, in: namespace)
+        } else {
+            self
         }
     }
 
@@ -141,18 +174,48 @@ extension View {
     /// `reachesInput` false leaves the bottom edge alone: nothing is down
     /// there yet, and a question flying up out of the input has to be seen
     /// from its first frame, not emerge from a fade.
+    ///
+    /// Before macOS 26 there's no edge effect, only insets and the fade.
+    @ViewBuilder
     func cardScrollEdges(reachesInput: Bool = true) -> some View {
-        self
-            .safeAreaBar(edge: .top, spacing: 0) {
-                Color.clear.frame(height: CardMetrics.headerInset)
-            }
-            .safeAreaBar(edge: .bottom, spacing: 0) {
-                Color.clear.frame(height: CardMetrics.footerInset)
-            }
-            .scrollEdgeEffectStyle(.soft, for: .vertical)
-            .scrollEdgeEffectHidden(!reachesInput, for: .bottom)
-            .mask { CardEdgeFade(fadesBottom: reachesInput) }
+        if #available(macOS 26.0, *) {
+            self
+                .safeAreaBar(edge: .top, spacing: 0) {
+                    Color.clear.frame(height: CardMetrics.headerInset)
+                }
+                .safeAreaBar(edge: .bottom, spacing: 0) {
+                    Color.clear.frame(height: CardMetrics.footerInset)
+                }
+                .scrollEdgeEffectStyle(.soft, for: .vertical)
+                .scrollEdgeEffectHidden(!reachesInput, for: .bottom)
+                .mask { CardEdgeFade(fadesBottom: reachesInput) }
+        } else {
+            self
+                .safeAreaInset(edge: .top, spacing: 0) {
+                    Color.clear.frame(height: CardMetrics.headerInset)
+                }
+                .safeAreaInset(edge: .bottom, spacing: 0) {
+                    Color.clear.frame(height: CardMetrics.footerInset)
+                }
+                .mask { CardEdgeFade(fadesBottom: reachesInput) }
+        }
     }
+}
+
+/// The desktop behind Flyby's panel, blurred: what stands in for Liquid
+/// Glass before macOS 26. AppKit's rather than a SwiftUI material, which in
+/// a clear, non-activating panel doesn't reliably blur what's behind the
+/// window or stay lit while another app is frontmost.
+struct BehindWindowBlur: NSViewRepresentable {
+    func makeNSView(context: Context) -> NSVisualEffectView {
+        let view = NSVisualEffectView()
+        view.material = .hudWindow
+        view.blendingMode = .behindWindow
+        view.state = .active
+        return view
+    }
+
+    func updateNSView(_ view: NSVisualEffectView, context: Context) {}
 }
 
 /// Opaque down the middle of the card, clear under the corner buttons and
@@ -245,6 +308,8 @@ struct GlassKeyButton: View {
 /// Glass elements that sit near each other should be rendered together, so
 /// they can share one sampling pass and blend or morph into each other as
 /// they appear — which is what makes a row of buttons read as one control.
+/// `spacing` is how close shapes have to be to merge, not layout. Before
+/// macOS 26 there's no glass to group, and the content stands as it is.
 struct GlassGroup<Content: View>: View {
     private let spacing: CGFloat?
     private let content: Content
@@ -255,7 +320,11 @@ struct GlassGroup<Content: View>: View {
     }
 
     var body: some View {
-        GlassEffectContainer(spacing: spacing) {
+        if #available(macOS 26.0, *) {
+            GlassEffectContainer(spacing: spacing) {
+                content
+            }
+        } else {
             content
         }
     }

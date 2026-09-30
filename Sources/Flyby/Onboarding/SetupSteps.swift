@@ -79,7 +79,7 @@ struct ProviderStep: View {
                 subtitle: "Pick one to start. You can switch any time from Flyby's bar."
             )
 
-            GlassEffectContainer(spacing: 12) {
+            GlassGroup(spacing: 12) {
                 Grid(horizontalSpacing: 12, verticalSpacing: 12) {
                     GridRow {
                         tile(.browser)
@@ -153,11 +153,12 @@ private struct ProviderTile: View {
             .contentShape(shape)
         }
         .buttonStyle(.plain)
-        .paneGlass(shape, tint: isSelected ? Color.accentColor.opacity(0.14) : nil, interactive: true)
+        .disabled(!kind.isAvailable)
+        .paneGlass(shape, tint: isSelected ? Color.accentColor.opacity(0.14) : nil, interactive: kind.isAvailable)
         .scaleEffect(hovering ? 1.015 : 1)
         .offset(y: hovering ? -1 : 0)
         .onHover { inside in
-            withAnimation(.spring(duration: 0.3, bounce: 0.3)) { hovering = inside }
+            withAnimation(.spring(duration: 0.3, bounce: 0.3)) { hovering = inside && kind.isAvailable }
         }
         .accessibilityLabel(kind.label)
         .accessibilityValue(kind.detail)
@@ -169,6 +170,7 @@ private extension ProviderKind {
     /// Shorter than `detail`, which reads as a sentence in Settings; a tile
     /// has room for a phrase.
     var tagline: String {
+        if !isAvailable { return "Needs macOS 27" }
         switch self {
         case .browser:           return "Opens results in your browser"
         case .aiMode:            return "Google's AI answers, in Flyby"

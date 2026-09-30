@@ -47,6 +47,10 @@ final class ProviderMenu: NSObject {
             let item = self.item(provider.label, symbol: provider.icon, key: "\(provider.number)", action: #selector(chooseProvider))
             item.representedObject = provider
             item.state = provider == settings.provider ? .on : .off
+            if !provider.isAvailable {
+                item.isEnabled = false
+                item.subtitle = provider.detail
+            }
             menu.addItem(item)
         }
 

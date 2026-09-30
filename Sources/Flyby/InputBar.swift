@@ -285,7 +285,7 @@ struct StagePills: View {
 
     var body: some View {
         // Spacing under the gap between them: two pills, never one blob.
-        GlassEffectContainer(spacing: 2) {
+        GlassGroup(spacing: 2) {
             HStack(spacing: 8) {
                 StagePill(
                     symbol: "clock.arrow.circlepath",

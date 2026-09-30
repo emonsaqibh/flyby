@@ -54,13 +54,11 @@ struct PracticeStep: View {
                     .scaleEffect(showsCheck && !reduceMotion ? 0.8 : 1)
 
                 if showsCheck {
-                    Image(systemName: "checkmark.circle.fill")
-                        .font(.system(size: 88, weight: .regular))
-                        .symbolRenderingMode(.palette)
-                        .foregroundStyle(.white, Color.accentColor)
-                        .shadow(color: Color.accentColor.opacity(0.45), radius: 24, y: 6)
-                        .transition(.symbolEffect(.drawOn))
-                        .accessibilityLabel("Success")
+                    if #available(macOS 26.0, *) {
+                        successCheck.transition(.symbolEffect(.drawOn))
+                    } else {
+                        successCheck.transition(.scale.combined(with: .opacity))
+                    }
                 }
             }
             .frame(height: 110)
@@ -86,6 +84,16 @@ struct PracticeStep: View {
             try? await Task.sleep(for: .seconds(reduceMotion ? 0 : 0.6))
             withAnimation(.spring(duration: 0.6, bounce: 0.4)) { showsCheck = true }
         }
+    }
+
+    /// Drawn on stroke by stroke from macOS 26; popped in before that.
+    private var successCheck: some View {
+        Image(systemName: "checkmark.circle.fill")
+            .font(.system(size: 88, weight: .regular))
+            .symbolRenderingMode(.palette)
+            .foregroundStyle(.white, Color.accentColor)
+            .shadow(color: Color.accentColor.opacity(0.45), radius: 24, y: 6)
+            .accessibilityLabel("Success")
     }
 
     /// "Listening" while waiting; quietly gone once it's worked.

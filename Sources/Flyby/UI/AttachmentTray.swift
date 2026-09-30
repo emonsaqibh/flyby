@@ -78,7 +78,7 @@ private struct NoticeCard: View {
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
                 Button(actionTitle, action: action)
-                    .buttonStyle(.glass)
+                    .flybyGlassButton()
                     .controlSize(.small)
                     .padding(.top, 4)
             }

@@ -50,7 +50,7 @@ struct AppleIntelligenceStatus: View {
         switch readiness {
         case .ready:        return AnyShapeStyle(.green)
         case .preparing:    return AnyShapeStyle(.tint)
-        case .turnedOff, .unsupported: return AnyShapeStyle(.secondary)
+        case .turnedOff, .unsupported, .needsNewerMacOS: return AnyShapeStyle(.secondary)
         }
     }
 
@@ -59,7 +59,7 @@ struct AppleIntelligenceStatus: View {
         case .ready:        return "checkmark.circle.fill"
         case .turnedOff:    return "exclamationmark.triangle.fill"
         case .preparing:    return "arrow.down.circle.dotted"
-        case .unsupported:  return "xmark.circle.fill"
+        case .unsupported, .needsNewerMacOS: return "xmark.circle.fill"
         }
     }
 }

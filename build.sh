@@ -15,10 +15,12 @@
 # All development happens in the dev build. It takes its version from git
 # ("0.3.0-dev.14 · pill": 14 commits past v0.3.0, on branch feature/pill), wears
 # an amber icon and a DEV badge, and never checks for updates. A release build is
-# made once per version by release.sh, and frozen. Both are Apple silicon only:
-# Flyby needs macOS 27, which doesn't run on Intel Macs.
+# made once per version by release.sh, and frozen. Both are Apple silicon only,
+# for macOS 15 and later.
 #
-# Needs Xcode 27. macOS 27's SwiftUI implements @State and friends as macros,
+# Needs Xcode 27 and its macOS 27 SDK, whatever the deployment target: Liquid
+# Glass and Apple Intelligence are compiled in, and turned on at runtime where
+# macOS has them. macOS 27's SwiftUI implements @State and friends as macros,
 # and their compiler plugin ships with Xcode, not the Command Line Tools — so
 # when xcode-select points at the CLT, Xcode is used for this build anyway.
 #
@@ -126,8 +128,8 @@ mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$BIN" "$APP/Contents/MacOS/Flyby"
 
 # SwiftPM's default build system (from Xcode 27) stamps the binary with the
-# deployment target as its SDK version too, so a 27.0 target built with a
-# newer SDK claims the older one. macOS picks which generation of its design
+# deployment target as its SDK version too, so a 15.0 target built with the
+# macOS 27 SDK claims the macOS 15 one. macOS picks which generation of its design
 # an app gets from that number, so write the SDK that was actually used back in.
 SDK_VERSION="$(xcrun --sdk macosx --show-sdk-version)"
 read -r MIN_OS STAMPED_SDK < <(otool -l "$APP/Contents/MacOS/Flyby" \

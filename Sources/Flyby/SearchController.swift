@@ -422,6 +422,7 @@ final class SearchController: ObservableObject {
         case .retry:   return offersRetry
         case .copy:    return isResultVisible && !answer.isEmpty
         case .screenshot: return AppSettings.shared.provider.takesScreenshots
+        case .provider(let provider): return provider.isAvailable
         default:       return true
         }
     }

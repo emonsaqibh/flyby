@@ -105,6 +105,8 @@ jobs:
         if: steps.guard.outputs.skip != 'true'
         run: |
           test "$(lipo -archs build/Flyby.app/Contents/MacOS/Flyby)" = arm64
+          otool -l build/Flyby.app/Contents/MacOS/Flyby | grep -A4 LC_BUILD_VERSION | grep -q 'minos 15.0'
+          otool -l build/Flyby.app/Contents/MacOS/Flyby | grep -B2 FoundationModels | grep -q LC_LOAD_WEAK_DYLIB
           test "$(/usr/libexec/PlistBuddy -c 'Print CFBundleIdentifier' build/Flyby.app/Contents/Info.plist)" = com.fringecore.flyby
           test "$(/usr/libexec/PlistBuddy -c 'Print CFBundleShortVersionString' build/Flyby.app/Contents/Info.plist)" = "${{ steps.version.outputs.version }}"
           codesign --verify --strict build/Flyby.app

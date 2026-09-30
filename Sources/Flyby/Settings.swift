@@ -21,7 +21,17 @@ enum ProviderKind: String, CaseIterable, Identifiable {
         }
     }
 
+    /// Whether it can answer on this macOS at all. Apple Intelligence needs
+    /// macOS 27; it stays in the list regardless, so every provider keeps its
+    /// ⌘-number.
+    var isAvailable: Bool {
+        guard self == .appleIntelligence else { return true }
+        if #available(macOS 27.0, *) { return true }
+        return false
+    }
+
     var detail: String {
+        if !isAvailable { return "Needs macOS 27 or later" }
         switch self {
         case .browser: return "Opens the search in your default browser"
         case .aiMode:  return "Answers from Google AI Mode, in your own Google session"
@@ -224,7 +234,9 @@ final class AppSettings: ObservableObject {
         screenshotShortcut = screenshot
         hasCapturedScreen = defaults.bool(forKey: "hasCapturedScreen")
         whatsNewSeen = defaults.integer(forKey: "whatsNewSeen")
-        provider = ProviderKind(rawValue: defaults.string(forKey: "provider") ?? "") ?? .browser
+        // A provider this macOS can't run — Apple Intelligence in settings
+        // that came from a newer Mac — starts over from the default.
+        provider = ProviderKind(rawValue: defaults.string(forKey: "provider") ?? "").flatMap { $0.isAvailable ? $0 : nil } ?? .browser
         engine = SearchEngine(rawValue: defaults.string(forKey: "engine") ?? "") ?? .google
         geminiModel = AppSettings.loadGeminiModel(from: defaults)
         readerMode = defaults.object(forKey: "readerMode") as? Bool ?? true

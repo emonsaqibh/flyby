@@ -132,7 +132,7 @@ private struct OverlayStage: View {
     var body: some View {
         VStack(spacing: StageMetrics.pillGap) {
             ZStack(alignment: .bottom) {
-                GlassEffectContainer {
+                GlassGroup {
                     ZStack(alignment: .bottomLeading) {
                         if reduceMotion { barForCrossfade }
                         surface
@@ -140,7 +140,7 @@ private struct OverlayStage: View {
                     .frame(width: CardMetrics.width, height: stage.cardSize.height, alignment: .bottomLeading)
                 }
 
-                GlassEffectContainer {
+                GlassGroup {
                     input
                         .frame(width: CardMetrics.width, height: stage.cardSize.height, alignment: .bottomLeading)
                 }
@@ -237,7 +237,7 @@ private struct OverlayStage: View {
             // Interactive glass reacts to the pointer — right for the bar you
             // type in, a distraction on a card you're reading.
             .surface(geometry.outline, style: .smoke, interactive: !isOpen)
-            .glassEffectID(GlassElement.surface, in: glass)
+            .flybyGlassEffectID(GlassElement.surface, in: glass)
             .scaleEffect(stage.isExpanded || reduceMotion ? 1 : 0.55)
             .opacity(surfaceOpacity)
             .padding(.leading, geometry.leading)

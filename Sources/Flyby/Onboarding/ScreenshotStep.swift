@@ -146,9 +146,9 @@ struct ScreenshotStep: View {
             HStack(spacing: 10) {
                 if asked {
                     Button("Reopen \(BuildFlavor.appName)") { Installer.relaunch(at: Bundle.main.bundleURL) }
-                        .buttonStyle(.glassProminent)
+                        .flybyGlassButton(prominent: true)
                     Button("Open System Settings") { ScreenCapture.openSettings() }
-                        .buttonStyle(.glass)
+                        .flybyGlassButton()
                 } else {
                     Button("Allow Screen Recording") {
                         asked = true
@@ -157,7 +157,7 @@ struct ScreenshotStep: View {
                         ScreenCapture.requestPermission()
                         ScreenCapture.openSettings()
                     }
-                    .buttonStyle(.glassProminent)
+                    .flybyGlassButton(prominent: true)
                 }
             }
             .controlSize(.regular)

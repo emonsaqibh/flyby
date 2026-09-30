@@ -16,8 +16,8 @@ concurrency:
 jobs:
   build:
     name: Build & test (macOS 27)
-    # Flyby targets macOS 27, so it needs Xcode 27 to build and a macOS 27
-    # host to run its tests on.
+    # Flyby runs from macOS 15 but builds with the macOS 27 SDK, so it needs
+    # Xcode 27 to build; the tests run on a macOS 27 host.
     runs-on: xcode-27
     timeout-minutes: 30
     steps:
@@ -67,10 +67,15 @@ jobs:
       - name: Build release app (Flyby)
         run: FLAVOR=release VERSION="0.0.0-ci.${{ github.run_number }}" ./build.sh
 
-      - name: Check the release binary is Apple silicon, for macOS 27
+      # FoundationModels only exists from macOS 26, so it has to be weak-linked
+      # or Flyby won't launch on 15. The linker does that by itself as long
+      # as every use is behind an availability check.
+      - name: Check the release binary is Apple silicon, for macOS 15
         run: |
-          test "$(lipo -archs build/Flyby.app/Contents/MacOS/Flyby)" = arm64
-          otool -l build/Flyby.app/Contents/MacOS/Flyby | grep -A4 LC_BUILD_VERSION | grep -q 'minos 27'
+          BIN=build/Flyby.app/Contents/MacOS/Flyby
+          test "$(lipo -archs "$BIN")" = arm64
+          otool -l "$BIN" | grep -A4 LC_BUILD_VERSION | grep -q 'minos 15.0'
+          otool -l "$BIN" | grep -B2 FoundationModels | grep -q LC_LOAD_WEAK_DYLIB
 
       # upload-artifact drops POSIX permissions, which leaves an app whose
       # executable won't run. ditto keeps them (and the signature) intact.

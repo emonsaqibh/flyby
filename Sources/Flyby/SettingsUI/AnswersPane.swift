@@ -132,6 +132,7 @@ private struct ProviderChoiceRow: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .disabled(!kind.isAvailable)
         .accessibilityElement(children: .combine)
         .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : .isButton)
         .accessibilityHint("Answers questions with \(kind.label).")

@@ -10,7 +10,7 @@
 
 <p align="center">
   <a href="https://github.com/emonsaqibh/flyby/releases/latest"><img src="https://img.shields.io/github/v/release/emonsaqibh/flyby?color=blue&label=Release" alt="Latest Release" /></a>
-  <a href="#"><img src="https://img.shields.io/badge/Platform-macOS%2027%2B-black?logo=apple" alt="macOS 27+" /></a>
+  <a href="#"><img src="https://img.shields.io/badge/Platform-macOS%2015%2B-black?logo=apple" alt="macOS 15+" /></a>
   <a href="#"><img src="https://img.shields.io/badge/Architecture-Apple%20Silicon-orange" alt="Apple Silicon" /></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-green" alt="License: MIT" /></a>
   <a href="https://github.com/emonsaqibh/flyby/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/emonsaqibh/flyby/ci.yml?branch=main&label=CI" alt="CI Status" /></a>
@@ -81,7 +81,7 @@ Open Terminal and run:
 curl -fsSL https://raw.githubusercontent.com/emonsaqibh/flyby/main/install.sh | bash
 ```
 
-> **Requirements:** macOS 27 or later on Apple silicon.
+> **Requirements:** macOS 15 or later on Apple silicon. Liquid Glass needs macOS 26, and Apple Intelligence macOS 27; earlier versions get a frosted look and the other providers.
 > 
 > *Flyby runs exclusively as a menu-bar companion (`LSUIElement`) — look for the sparkle magnifying glass in your menu bar.*
 
@@ -108,7 +108,7 @@ AI Mode runs inside your own Google session: Settings › Google Account securel
 Provide a free API key from [Google AI Studio](https://aistudio.google.com/apikey). Flyby stores it securely in your macOS Keychain. Google Search grounding is enabled by default so answers always reflect real-time web facts.
 
 ### Apple Intelligence
-Uses macOS 27's native `FoundationModels` framework. No accounts, no API keys, and zero network requests. Your queries and answers never leave your Mac.
+Uses macOS 27's native `FoundationModels` framework, so it needs macOS 27 or later. No accounts, no API keys, and zero network requests. Your queries and answers never leave your Mac.
 
 ---
 
@@ -169,7 +169,7 @@ Type `/` at the beginning of the input field to trigger quick actions:
 ## Building from Source
 
 ### Prerequisites
-* **macOS 27** running on Apple silicon.
+* A Mac with Apple silicon. Flyby runs on **macOS 15** and later.
 * **Xcode 27.0** or later.
 
 ### Build Commands

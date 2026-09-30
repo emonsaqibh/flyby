@@ -290,7 +290,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 let digit = "\(provider.number)"
                 if Self.matches(event, character: digit, keyCode: Key.digits[provider.number - 1])
                     || event.keyCode == Key.digits[provider.number - 1] {
-                    AppSettings.shared.provider = provider
+                    if provider.isAvailable { AppSettings.shared.provider = provider }
                     return true
                 }
             }

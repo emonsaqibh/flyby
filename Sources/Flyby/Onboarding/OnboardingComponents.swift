@@ -63,7 +63,8 @@ struct StepFootnote: View {
 
 /// Liquid Glass in the given shape — or, under Reduce Transparency, an
 /// opaque fill in the same shape with a hairline edge, which asks for exactly
-/// that and stays legible over the aura.
+/// that and stays legible over the aura. Before macOS 26, frosted material
+/// over the aura instead of glass.
 private struct PaneGlass<S: InsettableShape>: ViewModifier {
     let shape: S
     var tint: Color?
@@ -83,7 +84,7 @@ private struct PaneGlass<S: InsettableShape>: ViewModifier {
                     shape.strokeBorder(.separator, lineWidth: contrast == .increased ? 1.5 : 1)
                         .allowsHitTesting(false)
                 }
-        } else {
+        } else if #available(macOS 26.0, *) {
             content
                 .overlay {
                     // Glass's own rim all but vanishes over a pale aura;
@@ -94,9 +95,20 @@ private struct PaneGlass<S: InsettableShape>: ViewModifier {
                     }
                 }
                 .glassEffect(glass, in: shape)
+        } else {
+            content
+                .background {
+                    shape.fill(.regularMaterial)
+                    if let tint { shape.fill(tint) }
+                }
+                .overlay {
+                    shape.strokeBorder(.primary.opacity(contrast == .increased ? 0.35 : 0.12), lineWidth: 1)
+                        .allowsHitTesting(false)
+                }
         }
     }
 
+    @available(macOS 26.0, *)
     private var glass: Glass {
         var glass = Glass.regular
         if let tint { glass = glass.tint(tint) }

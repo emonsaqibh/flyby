@@ -9,6 +9,10 @@ import FlybyCore
 ///
 /// Streams the answer as it grows: each element is the whole answer so far,
 /// which is what the model hands back, rather than a delta.
+///
+/// Flyby runs from macOS 15, but the FoundationModels APIs it uses are
+/// macOS 27's, so everything that touches the model lives in `OnDeviceModel`
+/// and this checks the OS before handing over.
 @MainActor
 enum AppleIntelligenceProvider {
     /// Whether the model can answer on this Mac right now.
@@ -20,6 +24,8 @@ enum AppleIntelligenceProvider {
         case preparing
         /// This Mac, or this region, can't run it.
         case unsupported
+        /// macOS is older than 27, which Flyby's use of the model needs.
+        case needsNewerMacOS
 
         /// Why it can't answer, worded for the person asking. `nil` when ready.
         var problem: String? {
@@ -32,6 +38,8 @@ enum AppleIntelligenceProvider {
                 return "Apple Intelligence is still getting its model ready — it may be downloading. Try again in a few minutes."
             case .unsupported:
                 return "Apple Intelligence isn't available on this Mac."
+            case .needsNewerMacOS:
+                return "Apple Intelligence in Flyby needs macOS 27 or later. Gemini and Google AI Mode work on this Mac."
             }
         }
     }
@@ -39,16 +47,8 @@ enum AppleIntelligenceProvider {
     /// `SystemLanguageModel` is observable, so a view that reads this redraws
     /// when the model finishes downloading or Apple Intelligence is turned on.
     static var readiness: Readiness {
-        switch SystemLanguageModel.default.availability {
-        case .available:
-            return .ready
-        case .unavailable(.appleIntelligenceNotEnabled):
-            return .turnedOff
-        case .unavailable(.modelNotReady):
-            return .preparing
-        case .unavailable:
-            return .unsupported
-        }
+        guard #available(macOS 27.0, *) else { return .needsNewerMacOS }
+        return OnDeviceModel.readiness
     }
 
     static func openSystemSettings() {
@@ -62,7 +62,8 @@ enum AppleIntelligenceProvider {
     /// That undercounts languages that take a token a character, so the
     /// session trims again by the model's own token count.
     static func context(from turns: [ConversationTurn]) -> [ChatMessage] {
-        let budget = SystemLanguageModel.default.contextSize * 3 / 2
+        guard #available(macOS 27.0, *) else { return [] }
+        let budget = OnDeviceModel.contextSize * 3 / 2
         return ChatContext.messages(
             from: turns,
             maxTurns: 4,
@@ -76,6 +77,55 @@ enum AppleIntelligenceProvider {
     /// `context` is the conversation so far, for a follow-up; empty for a
     /// first question.
     static func stream(query: String, context: [ChatMessage] = []) -> AsyncThrowingStream<String, Error> {
+        guard #available(macOS 27.0, *) else {
+            return AsyncThrowingStream { continuation in
+                continuation.finish(throwing: AppleIntelligenceError(Readiness.needsNewerMacOS.problem ?? ""))
+            }
+        }
+        return OnDeviceModel.stream(query: query, context: context)
+    }
+
+    /// Loads the model while the user types. Kept for the first question,
+    /// which starts a new conversation; a follow-up needs the conversation in
+    /// its session and makes its own.
+    static func prewarm() {
+        guard #available(macOS 27.0, *) else { return }
+        OnDeviceModel.prewarm()
+    }
+
+    /// Short and plain: it's a small model, and every word here is paid for
+    /// before the first word of the answer.
+    fileprivate static func instructions() -> String {
+        let today = Date().formatted(date: .complete, time: .omitted)
+        return """
+        You are Flyby, a quick-answer assistant on the user's Mac. Answer the question directly and concisely, leading with the answer itself. Format with Markdown: short paragraphs, lists or tables where they help, fenced code blocks for code.
+        You run entirely on this Mac with no internet access. If a question depends on recent or live information — news, prices, scores, weather, schedules, anything after your training — say plainly that you can't check the web, and that Gemini or Google AI Mode in Flyby's provider menu can. Never make up facts, links or sources.
+        Today is \(today).
+        """
+    }
+}
+
+/// Everything that touches FoundationModels, which Flyby only uses on
+/// macOS 27.
+@available(macOS 27.0, *)
+@MainActor
+private enum OnDeviceModel {
+    static var readiness: AppleIntelligenceProvider.Readiness {
+        switch SystemLanguageModel.default.availability {
+        case .available:
+            return .ready
+        case .unavailable(.appleIntelligenceNotEnabled):
+            return .turnedOff
+        case .unavailable(.modelNotReady):
+            return .preparing
+        case .unavailable:
+            return .unsupported
+        }
+    }
+
+    static var contextSize: Int { SystemLanguageModel.default.contextSize }
+
+    static func stream(query: String, context: [ChatMessage]) -> AsyncThrowingStream<String, Error> {
         let readiness = readiness
         let session = context.isEmpty ? takeWarmSession() : nil
         // Each element supersedes the last, so a reader that falls behind
@@ -105,13 +155,10 @@ enum AppleIntelligenceProvider {
     /// opens so the first question doesn't also pay for loading the model.
     private static var warmSession: (session: LanguageModelSession, made: Date)?
 
-    /// Loads the model while the user types. Kept for the first question,
-    /// which starts a new conversation; a follow-up needs the conversation in
-    /// its session and makes its own.
     static func prewarm() {
         guard readiness == .ready else { return }
         if let warmSession, isFresh(warmSession.made) { return }
-        let session = LanguageModelSession(model: .default, instructions: instructions())
+        let session = LanguageModelSession(model: .default, instructions: AppleIntelligenceProvider.instructions())
         session.prewarm()
         warmSession = (session, Date())
     }
@@ -135,7 +182,7 @@ enum AppleIntelligenceProvider {
         // model sees the earlier turns as its own rather than as quoted text.
         let model = SystemLanguageModel.default
         let preamble = Transcript.Entry.instructions(
-            Transcript.Instructions(segments: [text(instructions())], toolDefinitions: [])
+            Transcript.Instructions(segments: [text(AppleIntelligenceProvider.instructions())], toolDefinitions: [])
         )
         var history: [Transcript.Entry] = context.map { message in
             switch message.role {
@@ -156,17 +203,6 @@ enum AppleIntelligenceProvider {
     private static func text(_ content: String) -> Transcript.Segment {
         .text(Transcript.TextSegment(content: content))
     }
-
-    /// Short and plain: it's a small model, and every word here is paid for
-    /// before the first word of the answer.
-    private static func instructions() -> String {
-        let today = Date().formatted(date: .complete, time: .omitted)
-        return """
-        You are Flyby, a quick-answer assistant on the user's Mac. Answer the question directly and concisely, leading with the answer itself. Format with Markdown: short paragraphs, lists or tables where they help, fenced code blocks for code.
-        You run entirely on this Mac with no internet access. If a question depends on recent or live information — news, prices, scores, weather, schedules, anything after your training — say plainly that you can't check the web, and that Gemini or Google AI Mode in Flyby's provider menu can. Never make up facts, links or sources.
-        Today is \(today).
-        """
-    }
 }
 
 /// A failure worded for someone who just asked a question.
@@ -185,6 +221,7 @@ struct AppleIntelligenceError: LocalizedError {
 
     private static func explanation(for error: Error) -> String {
         if let error = error as? AppleIntelligenceError { return error.message }
+        guard #available(macOS 27.0, *) else { return error.localizedDescription }
         if let error = error as? LanguageModelError {
             switch error {
             case .contextSizeExceeded:

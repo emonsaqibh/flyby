@@ -197,7 +197,7 @@ struct OnboardingView: View {
                         Label("Back", systemImage: "chevron.left")
                             .labelStyle(.titleAndIcon)
                     }
-                    .buttonStyle(.glass)
+                    .flybyGlassButton()
                     .controlSize(.large)
                     .transition(SoftSwapTransition())
                 }
@@ -209,7 +209,7 @@ struct OnboardingView: View {
                     .contentTransition(.interpolate)
                     .frame(minWidth: 170)
             }
-            .buttonStyle(.glassProminent)
+            .flybyGlassButton(prominent: true)
             .controlSize(.extraLarge)
             .keyboardShortcut(.defaultAction)
         }

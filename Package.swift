@@ -1,12 +1,14 @@
 // swift-tools-version: 6.4
 import PackageDescription
 
-// macOS 27 and Apple silicon only: Liquid Glass and the on-device Apple
-// Intelligence model (FoundationModels) are the product, not options, and
-// macOS 27 doesn't run on Intel Macs.
+// macOS 15 and Apple silicon. Built with the macOS 27 SDK: Liquid Glass
+// arrives on macOS 26 (a frosted look stands in before that) and Apple
+// Intelligence on macOS 27, where the FoundationModels APIs Flyby uses exist.
+// The linker weak-links FoundationModels by itself, since every use of it is
+// behind an availability check; CI checks that it stays that way.
 let package = Package(
     name: "Flyby",
-    platforms: [.macOS(.v27)],
+    platforms: [.macOS(.v15)],
     targets: [
         // Everything that can be reasoned about without a window: the answer
         // model, markdown parsing, browser cookie import, AI Mode page logic.
